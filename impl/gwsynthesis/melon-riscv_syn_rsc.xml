@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Module name="soc" T_Register="73(0)" T_Alu="127(0)" T_Lut="956(0)" T_Bsram="6(0)">
+ <SubModule name="clk_div" Register="1" Lut="1" T_Register="1(1)" T_Lut="1(1)"/>
+ <SubModule name="u_mem" Lut="17" Bsram="4" T_Lut="17(17)" T_Bsram="4(4)"/>
+ <SubModule name="u_cpu" Register="72" Alu="127" Lut="938" Bsram="2" T_Register="72(72)" T_Alu="127(127)" T_Lut="938(938)" T_Bsram="2(2)"/>
+</Module>
