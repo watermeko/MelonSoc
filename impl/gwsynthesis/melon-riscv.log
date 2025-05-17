@@ -1,0 +1,45 @@
+GowinSynthesis start
+Running parser ...
+Analyzing Verilog file 'D:\Development\Project\melon-riscv\melon-riscv\src\top.v'
+Undeclared symbol 'mem_addr', assumed default net type 'wire'("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":21)
+Undeclared symbol 'mem_rdata', assumed default net type 'wire'("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":22)
+Undeclared symbol 'mem_ren', assumed default net type 'wire'("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":23)
+Undeclared symbol 'mem_wdata', assumed default net type 'wire'("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":24)
+Undeclared symbol 'mem_wmask', assumed default net type 'wire'("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":25)
+WARN  (EX3638) : 'mem_addr' is already implicitly declared on line 21("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":28)
+WARN  (EX3638) : 'mem_rdata' is already implicitly declared on line 22("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":29)
+WARN  (EX3638) : 'mem_ren' is already implicitly declared on line 23("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":30)
+WARN  (EX3638) : 'mem_wdata' is already implicitly declared on line 24("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":31)
+WARN  (EX3638) : 'mem_wmask' is already implicitly declared on line 25("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":32)
+Analyzing Verilog file 'D:\Development\Project\melon-riscv\melon-riscv\src\clockworks.v'
+Analyzing Verilog file 'D:\Development\Project\melon-riscv\melon-riscv\src\cpu.v'
+Analyzing Verilog file 'D:\Development\Project\melon-riscv\melon-riscv\src\mem.v'
+Compiling module 'soc'("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":1)
+Compiling module 'clockworks'("D:\Development\Project\melon-riscv\melon-riscv\src\clockworks.v":1)
+WARN  (EX3791) : Expression size 2 truncated to fit in target size 1("D:\Development\Project\melon-riscv\melon-riscv\src\clockworks.v":16)
+Compiling module 'mem'("D:\Development\Project\melon-riscv\melon-riscv\src\mem.v":1)
+Extracting RAM for identifier 'MEM'("D:\Development\Project\melon-riscv\melon-riscv\src\mem.v":10)
+Compiling module 'cpu'("D:\Development\Project\melon-riscv\melon-riscv\src\cpu.v":1)
+Extracting RAM for identifier 'reg_bank'("D:\Development\Project\melon-riscv\melon-riscv\src\cpu.v":39)
+WARN  (EX3791) : Expression size 33 truncated to fit in target size 32("D:\Development\Project\melon-riscv\melon-riscv\src\cpu.v":132)
+NOTE  (EX0101) : Current top module is "soc"
+[5%] Running netlist conversion ...
+WARN  (CV0016) : Input rxd is unused("D:\Development\Project\melon-riscv\melon-riscv\src\top.v":5)
+Running device independent optimization ...
+[10%] Optimizing Phase 0 completed
+[15%] Optimizing Phase 1 completed
+[25%] Optimizing Phase 2 completed
+Running inference ...
+[30%] Inferring Phase 0 completed
+[40%] Inferring Phase 1 completed
+[50%] Inferring Phase 2 completed
+[55%] Inferring Phase 3 completed
+Running technical mapping ...
+[60%] Tech-Mapping Phase 0 completed
+[65%] Tech-Mapping Phase 1 completed
+[75%] Tech-Mapping Phase 2 completed
+[80%] Tech-Mapping Phase 3 completed
+[90%] Tech-Mapping Phase 4 completed
+[95%] Generate netlist file "D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg" completed
+[100%] Generate report file "D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv_syn.rpt.html" completed
+GowinSynthesis finish
