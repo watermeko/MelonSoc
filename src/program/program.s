@@ -1,30 +1,50 @@
 .section .text.init 
 .global _start      
 
-.equ wait_bit, 10
+.equ wait_bit, 1
+
+.equ RAM_BASE_ADDR, 0x1800
+.equ IO_BASE_ADDR, 0x400000
+
+.equ IO_LEDS_BIT, 0
+.equ IO_UART_DAT_BIT, 1
+.equ IO_UART_CTRL_BIT, 2
+
+.equ IO_LEDS_OFFSET, (1 << IO_LEDS_BIT) * 4
+.equ IO_UART_DAT_OFFSET, (1 << IO_UART_DAT_BIT) * 4
+.equ IO_UART_CTRL_OFFSET, (1 << IO_UART_CTRL_BIT) * 4
+
 
 _start:
-    li a0, 0
-    li s0, 0
-    li s1, 16
-L0_:
-    lb a1, 400(s0) 
-    sb a1, 800(s0)
-    call wait_
-    addi s0, s0, 1
-    bne s0, s1, L0_
-
-    li s0, 0
-L1_:
-    lb a0, 800(s0)
-    call wait_
-    addi s0, s0, 1
-    bne s0, s1, L1_
+    li sp, RAM_BASE_ADDR
+    li gp, IO_BASE_ADDR
+    la t0, colormap
+    lb a0 , 4(t0)
+    call putc_
     ebreak
+
+
 wait_:
     li t0, 1
     slli t0, t0, wait_bit
-L2_:
+wait_L0_:
     addi t0, t0, -1
-    bnez t0, L2_
-    ret 
+    bnez t0, wait_L0_
+    ret
+
+putc_:
+    sw a0, IO_UART_DAT_OFFSET(gp)
+    li t0, 1<<9
+putc_L0_:
+    lw t1, IO_UART_CTRL_OFFSET(gp)
+    and t1, t1, t0
+    bnez t1, putc_L0_
+    ret
+
+
+.data
+.align 2 # Ensure data alignment (optional for .byte, good practice)
+colormap:
+    .byte ' ', '.', ',', ':'
+    .byte ';', 'o', 'x', '%'
+    .byte '#', '@', 0, 0   # Null terminators or special values from original

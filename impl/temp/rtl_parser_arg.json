@@ -2,19 +2,19 @@
  "Device" : "GW2A-18C",
  "Files" : [
   {
-   "Path" : "D:/Development/Project/melon-riscv/melon-riscv/src/top.v",
+   "Path" : "D:/Development/Project/MelonSoc/src/cpu.v",
    "Type" : "verilog"
   },
   {
-   "Path" : "D:/Development/Project/melon-riscv/melon-riscv/src/clockworks.v",
+   "Path" : "D:/Development/Project/MelonSoc/src/mem.v",
    "Type" : "verilog"
   },
   {
-   "Path" : "D:/Development/Project/melon-riscv/melon-riscv/src/cpu.v",
+   "Path" : "D:/Development/Project/MelonSoc/src/top.v",
    "Type" : "verilog"
   },
   {
-   "Path" : "D:/Development/Project/melon-riscv/melon-riscv/src/mem.v",
+   "Path" : "D:/Development/Project/MelonSoc/src/emitter_uart.v",
    "Type" : "verilog"
   }
  ],
@@ -22,7 +22,7 @@
 
  ],
  "LoopLimit" : 2000,
- "ResultFile" : "D:/Development/Project/melon-riscv/melon-riscv/impl/temp/rtl_parser.result",
+ "ResultFile" : "D:/Development/Project/MelonSoc/impl/temp/rtl_parser.result",
  "Top" : "",
  "VerilogStd" : "verilog_2001",
  "VhdlStd" : "vhdl_93"

@@ -5,8 +5,7 @@ module cpu(
     input [31:0] mem_rdata,
     output mem_ren,
     output [31:0] mem_wdata,
-    output [3:0] mem_wmask,
-    output reg [31:0] x10
+    output [3:0] mem_wmask
 );
 
 reg [31:0] PC=0;
@@ -55,15 +54,18 @@ localparam STORE = 6;
 reg [2:0] state = FETCH_INSTR;
 
 always @(posedge clk or negedge rst_n) begin
+  // `ifdef  BENCH
+  // if (PC <= 32'd20) begin
+  // $display("T=%0t CPU: clk=%b rst_n=%b PC=%h state=%d instr=%h mem_ren=%b mem_wmask=%b mem_addr=%h cpu.isStore=%b cpu.isSYSTEM=%b",
+  //            $time, clk, rst_n, PC, state, instr, mem_ren, mem_wmask, mem_addr, isStore, isSYSTEM); // 添加你关心的信号
+  // end
+  // `endif 
   if (!rst_n) begin
     state <= FETCH_INSTR;
     PC <= 0;
   end else begin
     if(writeBackEn && rdId != 0) begin
       reg_bank[rdId] <= writeBackData;
-      if(rdId == 10) begin
-	       x10 <= writeBackData;
-	    end
 // `ifdef BENCH	 
 // 	    $display("x%0d <= %b",rdId,writeBackData);
 // `endif	
@@ -215,32 +217,6 @@ wire [3:0] STORE_wmask =
     mem_halfwordAccess ?
           (loadstore_addr[1] ? 4'b1100 : 4'b0011) :
             4'b1111;
-
-// `ifdef BENCH   
-//    always @(posedge clk) begin
-//     if(state == FETCH_REGS) begin
-//       $display("PC=%0d",PC);
-//       case (1'b1)
-// 	isALUreg: $display(
-// 	      "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
-//               rdId, rs1Id, rs2Id, funct3
-//         );
-// 	isALUimm: $display(
-// 	       "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
-//                rdId, rs1Id, Iimm, funct3
-//         );
-// 	isBranch: $display("BRANCH");
-// 	isJAL:    $display("JAL");
-// 	isJALR:   $display("JALR");
-// 	isAUIPC:  $display("AUIPC");
-// 	isLUI:    $display("LUI");	
-// 	isLoad:   $display("LOAD");
-// 	isStore:  $display("STORE");
-// 	isSYSTEM: $display("SYSTEM");
-//       endcase 
-//    end
-//    end
-// `endif
 
 `ifdef BENCH
    integer i;

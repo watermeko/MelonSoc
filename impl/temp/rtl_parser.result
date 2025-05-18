@@ -1,35 +1,35 @@
 [
  {
-  "InstFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/top.v",
+  "InstFile" : "D:/Development/Project/MelonSoc/src/top.v",
   "InstLine" : 1,
-  "InstName" : "soc",
-  "ModuleFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/top.v",
+  "InstName" : "SOC",
+  "ModuleFile" : "D:/Development/Project/MelonSoc/src/top.v",
   "ModuleLine" : 1,
-  "ModuleName" : "soc",
+  "ModuleName" : "SOC",
   "SubInsts" : [
    {
-    "InstFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/top.v",
-    "InstLine" : 14,
-    "InstName" : "clk_div",
-    "ModuleFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/clockworks.v",
-    "ModuleLine" : 1,
-    "ModuleName" : "clockworks"
-   },
-   {
-    "InstFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/top.v",
-    "InstLine" : 19,
+    "InstFile" : "D:/Development/Project/MelonSoc/src/top.v",
+    "InstLine" : 21,
     "InstName" : "u_mem",
-    "ModuleFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/mem.v",
+    "ModuleFile" : "D:/Development/Project/MelonSoc/src/mem.v",
     "ModuleLine" : 1,
     "ModuleName" : "mem"
    },
    {
-    "InstFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/top.v",
-    "InstLine" : 34,
+    "InstFile" : "D:/Development/Project/MelonSoc/src/top.v",
+    "InstLine" : 30,
     "InstName" : "u_cpu",
-    "ModuleFile" : "D:/Development/Project/melon-riscv/melon-riscv/src/cpu.v",
+    "ModuleFile" : "D:/Development/Project/MelonSoc/src/cpu.v",
     "ModuleLine" : 1,
     "ModuleName" : "cpu"
+   },
+   {
+    "InstFile" : "D:/Development/Project/MelonSoc/src/top.v",
+    "InstLine" : 64,
+    "InstName" : "u_emitter_uart",
+    "ModuleFile" : "D:/Development/Project/MelonSoc/src/emitter_uart.v",
+    "ModuleLine" : 1,
+    "ModuleName" : "corescore_emitter_uart"
    }
   ]
  }

@@ -1,14 +1,13 @@
-Reading netlist file: "D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg"
-Parsing netlist file "D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg" completed
+Reading netlist file: "D:\Development\Project\MelonSoc\impl\gwsynthesis\melon-riscv.vg"
+Parsing netlist file "D:\Development\Project\MelonSoc\impl\gwsynthesis\melon-riscv.vg" completed
 Processing netlist completed
-Reading constraint file: "D:\Development\Project\melon-riscv\melon-riscv\src\melon-riscv.cst"
+Reading constraint file: "D:\Development\Project\MelonSoc\src\melon-riscv.cst"
 Physical Constraint parsed completed
 Running placement......
 [10%] Placement Phase 0 completed
 [20%] Placement Phase 1 completed
 [30%] Placement Phase 2 completed
 WARN  (TA1132) :  'clk' was determined to be a clock but was not created.
-WARN  (TA1132) :  'slow_clk' was determined to be a clock but was not created.
 [50%] Placement Phase 3 completed
 Running routing......
 [60%] Routing Phase 0 completed
@@ -22,10 +21,10 @@ Bitstream generation in progress......
 Bitstream generation completed
 Running power analysis......
 [100%] Power analysis completed
-Generate file "D:\Development\Project\melon-riscv\melon-riscv\impl\pnr\melon-riscv.power.html" completed
-Generate file "D:\Development\Project\melon-riscv\melon-riscv\impl\pnr\melon-riscv.pin.html" completed
-Generate file "D:\Development\Project\melon-riscv\melon-riscv\impl\pnr\melon-riscv.rpt.html" completed
-Generate file "D:\Development\Project\melon-riscv\melon-riscv\impl\pnr\melon-riscv.rpt.txt" completed
-Generate file "D:\Development\Project\melon-riscv\melon-riscv\impl\pnr\melon-riscv.tr.html" completed
-Sat May 17 16:50:48 2025
+Generate file "D:\Development\Project\MelonSoc\impl\pnr\melon-riscv.power.html" completed
+Generate file "D:\Development\Project\MelonSoc\impl\pnr\melon-riscv.pin.html" completed
+Generate file "D:\Development\Project\MelonSoc\impl\pnr\melon-riscv.rpt.html" completed
+Generate file "D:\Development\Project\MelonSoc\impl\pnr\melon-riscv.rpt.txt" completed
+Generate file "D:\Development\Project\MelonSoc\impl\pnr\melon-riscv.tr.html" completed
+Sun May 18 18:56:27 2025
 

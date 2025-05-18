@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Module name="soc" T_Register="73(0)" T_Alu="127(0)" T_Lut="956(0)" T_Bsram="6(0)">
- <SubModule name="clk_div" Register="1" Lut="1" T_Register="1(1)" T_Lut="1(1)"/>
- <SubModule name="u_mem" Lut="17" Bsram="4" T_Lut="17(17)" T_Bsram="4(4)"/>
- <SubModule name="u_cpu" Register="72" Alu="127" Lut="938" Bsram="2" T_Register="72(72)" T_Alu="127(127)" T_Lut="938(938)" T_Bsram="2(2)"/>
+<Module name="SOC" Register="6" Lut="6" T_Register="92(6)" T_Alu="135(0)" T_Lut="992(6)" T_Bsram="6(0)">
+ <SubModule name="u_mem" Lut="15" Bsram="4" T_Lut="15(15)" T_Bsram="4(4)"/>
+ <SubModule name="u_cpu" Register="66" Alu="127" Lut="953" Bsram="2" T_Register="66(66)" T_Alu="127(127)" T_Lut="953(953)" T_Bsram="2(2)"/>
+ <SubModule name="u_emitter_uart" Register="20" Alu="8" Lut="18" T_Register="20(20)" T_Alu="8(8)" T_Lut="18(18)"/>
 </Module>

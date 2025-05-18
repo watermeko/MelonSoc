@@ -50,11 +50,11 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Design File</td>
-<td>D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg</td>
+<td>D:\Development\Project\MelonSoc\impl\gwsynthesis\melon-riscv.vg</td>
 </tr>
 <tr>
 <td class="label">Physical Constraints File</td>
-<td>D:\Development\Project\melon-riscv\melon-riscv\src\melon-riscv.cst</td>
+<td>D:\Development\Project\MelonSoc\src\melon-riscv.cst</td>
 </tr>
 <tr>
 <td class="label">Timing Constraints File</td>
@@ -78,7 +78,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Created Time</td>
-<td>Sat May 17 16:50:48 2025
+<td>Sun May 18 18:56:27 2025
 </td>
 </tr>
 <tr>
@@ -135,6 +135,25 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <td>in</td>
 <td>IOR35[B]</td>
 <td>SI/D2</td>
+<td>LVCMOS33</td>
+<td>NA</td>
+<td>UP</td>
+<td>ON</td>
+<td>NONE</td>
+<td>NA</td>
+<td>NA</td>
+<td>OFF</td>
+<td>NA</td>
+<td>3.3</td>
+</tr>
+<tr>
+<td class="label">rxd</td>
+<td>-</td>
+<td>N7/3</td>
+<td>Y</td>
+<td>in</td>
+<td>IOR47[B]</td>
+<td>RPLL2_C_fb</td>
 <td>LVCMOS33</td>
 <td>NA</td>
 <td>UP</td>
@@ -263,21 +282,21 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <tr>
 <td class="label">txd</td>
 <td>-</td>
-<td>R6/4</td>
-<td>N</td>
+<td>N8/3</td>
+<td>Y</td>
 <td>out</td>
-<td>IOB54[A]</td>
+<td>IOR40[A]</td>
 <td>-</td>
-<td>LVCMOS18</td>
+<td>LVCMOS33</td>
 <td>8</td>
 <td>UP</td>
 <td>NA</td>
 <td>NA</td>
 <td>OFF</td>
 <td>NA</td>
+<td>OFF</td>
 <td>NA</td>
-<td>NA</td>
-<td>1.8</td>
+<td>3.3</td>
 </tr>
 </table>
 <br/>
@@ -2325,16 +2344,16 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">R6/4</td>
-<td>txd</td>
-<td>out</td>
+<td>-</td>
+<td>in</td>
 <td>IOB54[A]</td>
 <td>-</td>
 <td>LVCMOS18</td>
-<td>8</td>
+<td>NA</td>
 <td>UP</td>
+<td>ON</td>
+<td>NONE</td>
 <td>NA</td>
-<td>NA</td>
-<td>OFF</td>
 <td>NA</td>
 <td>NA</td>
 <td>NA</td>
@@ -3600,18 +3619,18 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">N8/3</td>
-<td>-</td>
-<td>in</td>
+<td>txd</td>
+<td>out</td>
 <td>IOR40[A]</td>
 <td>-</td>
 <td>LVCMOS33</td>
-<td>NA</td>
+<td>8</td>
 <td>UP</td>
-<td>ON</td>
-<td>NONE</td>
 <td>NA</td>
 <td>NA</td>
+<td>OFF</td>
 <td>NA</td>
+<td>OFF</td>
 <td>NA</td>
 <td>3.3</td>
 </tr>
@@ -3719,7 +3738,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">N7/3</td>
-<td>-</td>
+<td>rxd</td>
 <td>in</td>
 <td>IOR47[B]</td>
 <td>RPLL2_C_fb</td>
@@ -3730,7 +3749,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <td>NONE</td>
 <td>NA</td>
 <td>NA</td>
-<td>NA</td>
+<td>OFF</td>
 <td>NA</td>
 <td>3.3</td>
 </tr>
