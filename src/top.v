@@ -58,16 +58,13 @@ end
 
 wire uart_valid = isIO && mem_wen && mem_wordaddr[IO_UART_DAT_BIT];
 wire uart_ready;
-corescore_emitter_uart #(
-  .clk_freq_hz(27_000_000),
-  .baud_rate(115200)
-) u_emitter_uart(
-  .i_clk(clk),
-  .i_rst(!rst_n),
-  .i_data(mem_wdata[7:0]),
-  .i_valid(uart_valid),
-  .o_ready(uart_ready),
-  .o_uart_tx(txd)
+uart u_uart(
+  .clk(clk),
+  .rst_n(rst_n),
+  .tx_data(mem_wdata[7:0]),
+  .tx_valid(uart_valid),
+  .tx_ready(uart_ready),
+  .txd(txd)
 );
 
 wire [31:0] IO_data = mem_wordaddr[IO_UART_CTRL_BIT] ? {22'b0, !uart_ready, 9'b0} : 32'b0;

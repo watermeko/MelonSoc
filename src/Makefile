@@ -14,7 +14,7 @@ LINKER_SCRIPT = program/linker.ld
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
 
-VERILOG_SOURCES = top.v bench_iverilog.v mem.v  cpu.v emitter_uart.v
+VERILOG_SOURCES = top.v bench_iverilog.v mem.v  cpu.v uart.v
 
 BUILD_DIR = build
 
