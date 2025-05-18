@@ -1,8 +1,8 @@
--d D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg
+-d D:\Development\Project\MelonSoc\impl\gwsynthesis\melon-riscv.vg
 -p GW2A-18C-PBGA256-8
 -pn GW2A-LV18PG256C8/I7
--cst D:\Development\Project\melon-riscv\melon-riscv\src\melon-riscv.cst
--cfg D:\Development\Project\melon-riscv\melon-riscv\impl\pnr\device.cfg
+-cst D:\Development\Project\MelonSoc\src\melon-riscv.cst
+-cfg D:\Development\Project\MelonSoc\impl\pnr\device.cfg
 -bit
 -tr
 -ph

@@ -7,7 +7,7 @@ module mem(
     input [3:0] mem_wmask
 );
 
-reg [31:0] MEM [0:255];
+reg [31:0] MEM [0:1535]; // 6kb memory
 
 wire [29:0] word_addr = mem_addr[31:2];
 
@@ -23,6 +23,13 @@ end
 
 initial begin
     $readmemh("build/program.hex", MEM);
+    `ifdef BENCH
+    $display("%h",MEM[0]);
+    $display("%h",MEM[1]);
+    $display("%h",MEM[2]);
+    $display("%h",MEM[3]);
+
+    `endif
 
     MEM[100] = {8'h4, 8'h3, 8'h2, 8'h1};
     MEM[101] = {8'h8, 8'h7, 8'h6, 8'h5};

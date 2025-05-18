@@ -24,7 +24,7 @@ _S = program/$(TARGET_NAME).s       # 您的汇编源文件
 LINKER_SCRIPT = program/linker.ld      # 链接脚本路径
 
 # Verilog 源文件 (假设在 Makefile 同级目录)
-VERILOG_SOURCES = top.v bench_iverilog.v mem.v clockworks.v cpu.v
+VERILOG_SOURCES = top.v bench_iverilog.v mem.v  cpu.v emitter_uart.v
 # VERILOG_SOURCES = verilog/top.v verilog/bench_iverilog.v ... # 如果 Verilog 文件在子目录
 
 # --- Build Directory ---

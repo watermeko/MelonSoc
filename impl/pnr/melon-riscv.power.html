@@ -61,11 +61,11 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Design File</td>
-<td>D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg</td>
+<td>D:\Development\Project\MelonSoc\impl\gwsynthesis\melon-riscv.vg</td>
 </tr>
 <tr>
 <td class="label">Physical Constraints File</td>
-<td>D:\Development\Project\melon-riscv\melon-riscv\src\melon-riscv.cst</td>
+<td>D:\Development\Project\MelonSoc\src\melon-riscv.cst</td>
 </tr>
 <tr>
 <td class="label">Timing Constraints File</td>
@@ -89,7 +89,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Created Time</td>
-<td>Sat May 17 16:50:48 2025
+<td>Sun May 18 18:56:27 2025
 </td>
 </tr>
 <tr>
@@ -161,22 +161,22 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <table class="summary_table">
 <tr>
 <td class="label">Total Power (mW)</td>
-<td>221.066</td>
+<td>222.143</td>
 </tr>
 <tr>
 <td class="label">Quiescent Power (mW)</td>
-<td>122.622</td>
+<td>122.800</td>
 </tr>
 <tr>
 <td class="label">Dynamic Power (mW)</td>
-<td>98.443</td>
+<td>99.343</td>
 </tr>
 </table>
 <h2><a name="Thermal_Info">Thermal Information:</a></h2>
 <table class="summary_table">
 <tr>
 <td class="label">Junction Temperature</td>
-<td>32.079</td>
+<td>32.113</td>
 </tr>
 <tr>
 <td class="label">Theta JA</td>
@@ -184,7 +184,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Max Allowed Ambient Temperature</td>
-<td>77.921</td>
+<td>77.887</td>
 </tr>
 </table>
 <h2><a name="Supply_Summary">Supply Information:</a></h2>
@@ -199,30 +199,23 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <tr>
 <td>VCC</td>
 <td>1.000</td>
-<td>91.906</td>
-<td>69.999</td>
-<td>161.904</td>
+<td>92.106</td>
+<td>70.000</td>
+<td>162.106</td>
 </tr>
 <tr>
 <td>VCCX</td>
 <td>3.300</td>
-<td>0.991</td>
+<td>1.097</td>
 <td>15.000</td>
-<td>52.769</td>
-</tr>
-<tr>
-<td>VCCIO18</td>
-<td>1.800</td>
-<td>0.000</td>
-<td>0.106</td>
-<td>0.190</td>
+<td>53.118</td>
 </tr>
 <tr>
 <td>VCCIO33</td>
 <td>3.300</td>
-<td>0.991</td>
-<td>0.889</td>
-<td>6.202</td>
+<td>1.097</td>
+<td>1.000</td>
+<td>6.918</td>
 </tr>
 </table>
 <h1><a name="Detail">Power Details</a></h1>
@@ -236,15 +229,15 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td>Logic</td>
-<td>1.975</td>
+<td>2.076</td>
 <td>NA</td>
-<td>12.568</td>
+<td>12.500</td>
 </tr>
 <tr>
 <td>IO</td>
-<td>12.211
-<td>4.682
-<td>20.833
+<td>13.202
+<td>4.869
+<td>22.222
 </tr>
 <tr>
 <td>BSRAM</td>
@@ -261,21 +254,21 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <th class="label">Block Dynamic Power(mW)</th>
 </tr>
 <tr>
-<td>soc</td>
-<td>90.895</td>
-<td>90.895(90.895)</td>
+<td>SOC</td>
+<td>90.996</td>
+<td>90.996(90.988)</td>
 <tr>
-<td>soc/clk_div/</td>
-<td>0.005</td>
-<td>0.005(0.000)</td>
+<td>SOC/u_cpu/</td>
+<td>33.825</td>
+<td>33.825(0.000)</td>
 <tr>
-<td>soc/u_cpu/</td>
-<td>33.813</td>
-<td>33.813(0.000)</td>
+<td>SOC/u_emitter_uart/</td>
+<td>0.087</td>
+<td>0.087(0.000)</td>
 <tr>
-<td>soc/u_mem/</td>
-<td>57.077</td>
-<td>57.077(0.000)</td>
+<td>SOC/u_mem/</td>
+<td>57.075</td>
+<td>57.075(0.000)</td>
 </table>
 <h2><a name="By_Clock_Domain">Power By Clock Domain:</a></h2>
 <table class="detail_table">
@@ -285,14 +278,9 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <th class="label">Total Dynamic Power(mW)</th>
 </tr>
 <tr>
-<td>slow_clk</td>
-<td>100.000</td>
-<td>90.908</td>
-</tr>
-<tr>
 <td>clk</td>
 <td>100.000</td>
-<td>0.007</td>
+<td>91.009</td>
 </tr>
 </table>
 </div><!-- content -->

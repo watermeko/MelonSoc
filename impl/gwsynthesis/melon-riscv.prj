@@ -4,16 +4,16 @@
     <Version>beta</Version>
     <Device id="GW2A-18C" package="PBGA256" speed="8" partNumber="GW2A-LV18PG256C8/I7"/>
     <FileList>
-        <File path="D:\Development\Project\melon-riscv\melon-riscv\src\top.v" type="verilog"/>
-        <File path="D:\Development\Project\melon-riscv\melon-riscv\src\clockworks.v" type="verilog"/>
-        <File path="D:\Development\Project\melon-riscv\melon-riscv\src\cpu.v" type="verilog"/>
-        <File path="D:\Development\Project\melon-riscv\melon-riscv\src\mem.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\cpu.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\mem.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\top.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\emitter_uart.v" type="verilog"/>
     </FileList>
     <OptionList>
         <Option type="disable_insert_pad" value="0"/>
         <Option type="global_freq" value="100.000"/>
         <Option type="looplimit" value="2000"/>
-        <Option type="output_file" value="D:\Development\Project\melon-riscv\melon-riscv\impl\gwsynthesis\melon-riscv.vg"/>
+        <Option type="output_file" value="D:\Development\Project\MelonSoc\impl\gwsynthesis\melon-riscv.vg"/>
         <Option type="print_all_synthesis_warning" value="0"/>
         <Option type="ram_rw_check" value="0"/>
         <Option type="vcc" value="1.0"/>
