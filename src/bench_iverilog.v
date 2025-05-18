@@ -48,7 +48,7 @@ module bench();
 
     // Add a timeout for the simulation if it truly hangs
     initial begin
-        #2000000000; // Stop simulation after 200us if it hasn't finished
+        #200000; // Stop simulation after 200us if it hasn't finished
         $display("Simulation timed out!");
         $finish;
     end
