@@ -43,7 +43,6 @@ IVERILOG_FLAGS = -DBENCH -DFREQ_DIV=0
 all: 
 	@echo "Must select a target" 
 
-# !!! 下一行以 TAB 开头 !!!
 dirs:
 	@echo "Ensuring build directory $(BUILD_DIR) exists..."
 	@mkdir -p $(BUILD_DIR)
@@ -51,7 +50,6 @@ dirs:
 build: $(TARGET_HEX)
 	@echo "Build complete. Final HEX file: $(TARGET_HEX)"
 
-# !!! 下面的配方行必须以 TAB 开头 !!!
 $(BIN2HEX_EXECUTABLE): $(BIN2HEX_C_SRC) | dirs
 	@echo "Compiling host utility: $< -> $@"
 	$(HOST_CC) $< -o $@
