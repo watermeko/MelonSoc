@@ -19,8 +19,17 @@ _start:
     li sp, RAM_BASE_ADDR
     li gp, IO_BASE_ADDR
     la t0, colormap
-    lb a0 , 4(t0)
+    # lb a0 , 4(t0)
+L0_:
+    li a0, 78
     call putc_
+    li a0, 10 # Newline
+    call putc_
+    li a0, 79 
+    call putc_ 
+    li a0, 10
+    call putc_
+    j L0_
     ebreak
 
 
