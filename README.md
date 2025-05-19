@@ -15,6 +15,8 @@ make load_flash # 下载程序到FLASH
 
 make simulate_verilator # 暂不可用，verilator不支持高云的原语
 ```
+使用串口通信在终端上显示的ANSI图像：
+![图片](https://cdn.jsdelivr.net/gh/watermeko/picx-images-hosting@master/all/blog/图片.5fktdo511y.webp)
 
 # TODO
 + 添加更多外设

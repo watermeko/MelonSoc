@@ -45,14 +45,13 @@ wire        writeBackEn;
 
 localparam FETCH_INSTR = 0;
 localparam WAIT_INSTR = 1;
-localparam FETCH_REGS = 2;
-localparam EXECUTE = 3;
-localparam LOAD = 4;
-localparam WAIT_DATA = 5;
-localparam STORE = 6;
-localparam WAIT_Mex = 7;
-localparam WAIT_Mex2 = 8;
-localparam WAIT_Mex3 = 9;
+localparam EXECUTE = 2;
+localparam LOAD = 3;
+localparam WAIT_DATA = 4;
+localparam STORE = 5;
+localparam WAIT_Mex = 6;
+localparam WAIT_Mex2 = 7;
+localparam WAIT_Mex3 = 8;
 // localparam MUL_LATENCY = 0; 
 
 // reg [$clog2(MUL_LATENCY > 0 ? MUL_LATENCY : 1)-1:0] mul_wait_counter; 

@@ -25,7 +25,7 @@
     "SubInsts" : [
      {
       "InstFile" : "D:/Development/Project/MelonSoc/src/cpu.v",
-      "InstLine" : 146,
+      "InstLine" : 145,
       "InstName" : "u_gowin_mult",
       "ModuleFile" : "D:/Development/Project/MelonSoc/src/gowin_mult/gowin_mult.v",
       "ModuleLine" : 10,
@@ -33,7 +33,7 @@
      },
      {
       "InstFile" : "D:/Development/Project/MelonSoc/src/cpu.v",
-      "InstLine" : 157,
+      "InstLine" : 156,
       "InstName" : "u_interger_division_top",
       "ModuleFile" : "D:/Development/Project/MelonSoc/src/integer_division/integer_division.v",
       "ModuleLine" : 6616,
