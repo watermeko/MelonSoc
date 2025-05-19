@@ -1,17 +1,22 @@
 GowinSynthesis start
 Running parser ...
 Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\cpu.v'
+Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\gowin_mult\gowin_mult.v'
+Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\integer_division\integer_division.v'
 Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\mem.v'
 Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\top.v'
-Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\emitter_uart.v'
+Analyzing Verilog file 'D:\Development\Project\MelonSoc\src\uart.v'
 Compiling module 'SOC'("D:\Development\Project\MelonSoc\src\top.v":1)
 Compiling module 'mem'("D:\Development\Project\MelonSoc\src\mem.v":1)
 Extracting RAM for identifier 'MEM'("D:\Development\Project\MelonSoc\src\mem.v":10)
 Compiling module 'cpu'("D:\Development\Project\MelonSoc\src\cpu.v":1)
-Extracting RAM for identifier 'reg_bank'("D:\Development\Project\MelonSoc\src\cpu.v":38)
-WARN  (EX3791) : Expression size 33 truncated to fit in target size 32("D:\Development\Project\MelonSoc\src\cpu.v":134)
-Compiling module 'corescore_emitter_uart(clk_freq_hz=27000000,baud_rate=115200)'("D:\Development\Project\MelonSoc\src\emitter_uart.v":1)
-WARN  (EX3791) : Expression size 32 truncated to fit in target size 9("D:\Development\Project\MelonSoc\src\emitter_uart.v":32)
+Extracting RAM for identifier 'reg_bank'("D:\Development\Project\MelonSoc\src\cpu.v":39)
+Compiling module 'Gowin_MULT'("D:\Development\Project\MelonSoc\src\gowin_mult\gowin_mult.v":10)
+Compiling module 'Integer_Division_Top'("D:\Development\Project\MelonSoc\src\integer_division\integer_division.v":6616)
+Compiling module '**'("D:\Development\Project\MelonSoc\src\integer_division\integer_division.v":6615)
+WARN  (EX3791) : Expression size 33 truncated to fit in target size 32("D:\Development\Project\MelonSoc\src\cpu.v":228)
+Compiling module 'uart'("D:\Development\Project\MelonSoc\src\uart.v":1)
+Compiling module 'uart_tx'("D:\Development\Project\MelonSoc\src\uart.v":25)
 NOTE  (EX0101) : Current top module is "SOC"
 [5%] Running netlist conversion ...
 WARN  (CV0016) : Input rxd is unused("D:\Development\Project\MelonSoc\src\top.v":5)

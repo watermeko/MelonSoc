@@ -89,7 +89,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Created Time</td>
-<td>Sun May 18 18:56:27 2025
+<td>Mon May 19 22:39:39 2025
 </td>
 </tr>
 <tr>
@@ -161,7 +161,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <table class="summary_table">
 <tr>
 <td class="label">Total Power (mW)</td>
-<td>222.143</td>
+<td>396.220</td>
 </tr>
 <tr>
 <td class="label">Quiescent Power (mW)</td>
@@ -169,14 +169,14 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Dynamic Power (mW)</td>
-<td>99.343</td>
+<td>273.420</td>
 </tr>
 </table>
 <h2><a name="Thermal_Info">Thermal Information:</a></h2>
 <table class="summary_table">
 <tr>
 <td class="label">Junction Temperature</td>
-<td>32.113</td>
+<td>37.687</td>
 </tr>
 <tr>
 <td class="label">Theta JA</td>
@@ -184,7 +184,7 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td class="label">Max Allowed Ambient Temperature</td>
-<td>77.887</td>
+<td>72.313</td>
 </tr>
 </table>
 <h2><a name="Supply_Summary">Supply Information:</a></h2>
@@ -199,9 +199,9 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <tr>
 <td>VCC</td>
 <td>1.000</td>
-<td>92.106</td>
+<td>266.183</td>
 <td>70.000</td>
-<td>162.106</td>
+<td>336.183</td>
 </tr>
 <tr>
 <td>VCCX</td>
@@ -229,9 +229,9 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td>Logic</td>
-<td>2.076</td>
+<td>11.446</td>
 <td>NA</td>
-<td>12.500</td>
+<td>12.497</td>
 </tr>
 <tr>
 <td>IO</td>
@@ -241,9 +241,15 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td>BSRAM</td>
-<td>88.920
+<td>246.420
 <td>NA</td>
 <td>NA</td>
+</tr>
+<tr>
+<td>DSP</td>
+<td>7.200
+<td>NA</td>
+<td>5.531
 </tr>
 </table>
 <h2><a name="By_Hierarchy">Power By Hierarchy:</a></h2>
@@ -255,20 +261,168 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 </tr>
 <tr>
 <td>SOC</td>
-<td>90.996</td>
-<td>90.996(90.988)</td>
+<td>265.066</td>
+<td>265.066(265.048)</td>
 <tr>
 <td>SOC/u_cpu/</td>
-<td>33.825</td>
-<td>33.825(0.000)</td>
+<td>50.415</td>
+<td>50.415(15.638)</td>
 <tr>
-<td>SOC/u_emitter_uart/</td>
-<td>0.087</td>
-<td>0.087(0.000)</td>
+<td>SOC/u_cpu/u_gowin_mult/</td>
+<td>7.200</td>
+<td>7.200(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/</td>
+<td>8.438</td>
+<td>8.438(8.438)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/</td>
+<td>8.438</td>
+<td>8.438(8.438)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/</td>
+<td>8.438</td>
+<td>8.438(8.023)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[0].non_restoring_division_inst/</td>
+<td>0.059</td>
+<td>0.059(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[10].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[11].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[12].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[13].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[14].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[15].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[16].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[17].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[18].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[19].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[1].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[20].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[21].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[22].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[23].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[24].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[25].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[26].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[27].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[28].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[29].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[2].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[30].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[31].non_restoring_division_inst/</td>
+<td>0.256</td>
+<td>0.256(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[3].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[4].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[5].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[6].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[7].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[8].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
+<tr>
+<td>SOC/u_cpu/u_interger_division_top/integer_division_inst/integer_division_has_rem_inst/gen_non_restoring[9].non_restoring_division_inst/</td>
+<td>0.257</td>
+<td>0.257(0.000)</td>
 <tr>
 <td>SOC/u_mem/</td>
-<td>57.075</td>
-<td>57.075(0.000)</td>
+<td>214.576</td>
+<td>214.576(0.000)</td>
+<tr>
+<td>SOC/u_uart/</td>
+<td>0.057</td>
+<td>0.057(0.057)</td>
+<tr>
+<td>SOC/u_uart/u_uart_tx/</td>
+<td>0.057</td>
+<td>0.057(0.000)</td>
 </table>
 <h2><a name="By_Clock_Domain">Power By Clock Domain:</a></h2>
 <table class="detail_table">
@@ -280,7 +434,12 @@ table.detail_table th.label {  min-width: 8%; width: 8%; }
 <tr>
 <td>clk</td>
 <td>100.000</td>
-<td>91.009</td>
+<td>265.086</td>
+</tr>
+<tr>
+<td>NO CLOCK DOMAIN</td>
+<td>0.000</td>
+<td>0.000</td>
 </tr>
 </table>
 </div><!-- content -->

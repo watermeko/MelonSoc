@@ -72,14 +72,13 @@ end
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n)
         data_bit_count <= 4'b0;
-    else  if(baud_cnt == 13'd1) begin
-        if (!tx_ready)
-            data_bit_count <= data_bit_count + 1'b1;  //每波特率计数器的第一个时钟周期，数据位加一
-        else if(data_bit_count == 4'd9)
-            data_bit_count <= 4'd0;                    //发送完时，数据位清零
+    else if (tx_ready && !tx_valid) begin // 当UART空闲时 (tx_ready为1，且没有新的发送请求tx_valid)
+        data_bit_count <= 4'b0;         // 保持或复位 data_bit_count 为 0
     end
-    else
-        data_bit_count <= data_bit_count;
+    else if (!tx_ready && (baud_cnt == 13'd1)) begin // 当UART忙于发送且到达每个比特的采样点时
+        data_bit_count <= data_bit_count + 1'b1;  // 数据位计数器加一
+    end
+    // 在其他情况下，data_bit_count 保持其值 (例如，当 !tx_ready 但 baud_cnt != 1时)
 end
 
 // UART 数据发送逻辑

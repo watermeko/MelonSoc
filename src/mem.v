@@ -7,7 +7,7 @@ module mem(
     input [3:0] mem_wmask
 );
 
-reg [31:0] MEM [0:1535]; // 6kb memory
+reg [31:0] MEM [0:6140]; // 24kb memory
 
 wire [29:0] word_addr = mem_addr[31:2];
 
