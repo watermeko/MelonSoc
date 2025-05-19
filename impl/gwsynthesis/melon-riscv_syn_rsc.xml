@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Module name="SOC" Register="6" Lut="6" T_Register="92(6)" T_Alu="135(0)" T_Lut="992(6)" T_Bsram="6(0)">
- <SubModule name="u_mem" Lut="15" Bsram="4" T_Lut="15(15)" T_Bsram="4(4)"/>
- <SubModule name="u_cpu" Register="66" Alu="127" Lut="953" Bsram="2" T_Register="66(66)" T_Alu="127(127)" T_Lut="953(953)" T_Bsram="2(2)"/>
- <SubModule name="u_emitter_uart" Register="20" Alu="8" Lut="18" T_Register="20(20)" T_Alu="8(8)" T_Lut="18(18)"/>
+<Module name="SOC" Register="6" Lut="15" T_Register="228(6)" T_Alu="1246(0)" T_Lut="1679(15)" T_MULT36X36="1(0)" T_Bsram="18(0)">
+ <SubModule name="u_mem" Lut="16" Bsram="16" T_Lut="16(16)" T_Bsram="16(16)"/>
+ <SubModule name="u_cpu" Register="67" Alu="191" Lut="1413" Bsram="2" T_Register="195(67)" T_Alu="1246(191)" T_Lut="1605(1413)" T_MULT36X36="1(0)" T_Bsram="2(2)">
+  <SubModule name="u_gowin_mult" MULT36X36="1" T_MULT36X36="1(1)"/>
+  <SubModule name="u_interger_division_top" Register="128" Alu="1055" Lut="192" T_Register="128(128)" T_Alu="1055(1055)" T_Lut="192(192)"/>
+ </SubModule>
+ <SubModule name="u_uart" T_Register="27(0)" T_Lut="43(0)">
+  <SubModule name="u_uart_tx" Register="27" Lut="43" T_Register="27(27)" T_Lut="43(43)"/>
+ </SubModule>
 </Module>

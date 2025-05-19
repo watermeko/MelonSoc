@@ -21,15 +21,16 @@ wire isLUI   = (instr[6:0] == 7'b0110111); // LUI
 wire isLoad  = (instr[6:0] == 7'b0000011); // LOAD
 wire isStore = (instr[6:0] == 7'b0100011); // STORE
 wire isSYSTEM = (instr[6:0] == 7'b1110011); // SYSTEM
+wire isMex = isALUreg && funct7 == 7'b0000001; // M extension
+wire isMul = isMex && funct3[2] == 1'b0; // mul
+wire isDiv = isMex && funct3[2] == 1'b1; // div
 // The 5 immediate formats
 wire [31:0] Uimm = {instr[31], instr[30:12], {12{1'b0}}};
 wire [31:0] Iimm = {{21{instr[31]}}, instr[30:20]};
 wire [31:0] Simm = {{21{instr[31]}}, instr[30:25], instr[11:7]};
 wire [31:0] Bimm = {{20{instr[31]}}, instr[7], instr[30:25], instr[11:8], 1'b0};
 wire [31:0] Jimm = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0};
-// Source and destination registers
-wire [4:0] rs1Id = instr[19:15];
-wire [4:0] rs2Id = instr[24:20];
+// destination registers
 wire [4:0] rdId  = instr[11:7];
 // function codes
 wire [2:0] funct3 = instr[14:12];
@@ -42,7 +43,6 @@ wire [31:0] writeBackData;
 wire        writeBackEn;
 
 
-// ---------------EXECUTION UNIT-----------------
 localparam FETCH_INSTR = 0;
 localparam WAIT_INSTR = 1;
 localparam FETCH_REGS = 2;
@@ -50,8 +50,14 @@ localparam EXECUTE = 3;
 localparam LOAD = 4;
 localparam WAIT_DATA = 5;
 localparam STORE = 6;
+localparam WAIT_Mex = 7;
+localparam WAIT_Mex2 = 8;
+localparam WAIT_Mex3 = 9;
+// localparam MUL_LATENCY = 0; 
 
-reg [2:0] state = FETCH_INSTR;
+// reg [$clog2(MUL_LATENCY > 0 ? MUL_LATENCY : 1)-1:0] mul_wait_counter; 
+
+reg [3:0] state = FETCH_INSTR;
 
 always @(posedge clk or negedge rst_n) begin
   // `ifdef  BENCH
@@ -66,9 +72,9 @@ always @(posedge clk or negedge rst_n) begin
   end else begin
     if(writeBackEn && rdId != 0) begin
       reg_bank[rdId] <= writeBackData;
-// `ifdef BENCH	 
-// 	    $display("x%0d <= %b",rdId,writeBackData);
-// `endif	
+`ifdef BENCH	 
+	    $display("x%0d <= %b",rdId,writeBackData);
+`endif	
     end
 
     case (state)
@@ -77,11 +83,8 @@ always @(posedge clk or negedge rst_n) begin
       end
       WAIT_INSTR: begin
         instr <= mem_rdata;
-        state <= FETCH_REGS;
-      end
-      FETCH_REGS: begin
-        rs1 <= reg_bank[rs1Id];
-        rs2 <= reg_bank[rs2Id];
+        rs1 <= reg_bank[mem_rdata[19:15]];
+        rs2 <= reg_bank[mem_rdata[24:20]];
         state <= EXECUTE;
       end
       EXECUTE: begin
@@ -90,10 +93,8 @@ always @(posedge clk or negedge rst_n) begin
         end
         state <= isLoad ? LOAD :
                   isStore ? STORE :
+                  isMex ? WAIT_Mex :
                   FETCH_INSTR; 
-        `ifdef BENCH
-        if(isSYSTEM) $finish();
-        `endif
       end
       LOAD: begin
         state <= WAIT_DATA;
@@ -102,6 +103,19 @@ always @(posedge clk or negedge rst_n) begin
         state <= FETCH_INSTR;
       end
       STORE: begin
+        state <= FETCH_INSTR;
+      end
+      WAIT_Mex: begin
+        state <= WAIT_Mex2;
+      end
+      WAIT_Mex2: begin
+        if (isDiv) begin
+          state <= WAIT_Mex3; // div 
+        end else begin
+          state <= FETCH_INSTR;
+        end
+      end
+      WAIT_Mex3: begin
         state <= FETCH_INSTR;
       end
     endcase
@@ -128,9 +142,79 @@ wire EQ = (aluMinus[31:0] == 0);
 wire LTU = aluMinus[32];
 wire LT = (aluIn1[31] ^ aluIn2[31]) ? aluIn1[31] : aluMinus[32];
 
+wire [63:0] signed_mul;
+Gowin_MULT u_gowin_mult(
+  .a(aluIn1),
+  .b(aluIn2),
+  .ce(1'b1),
+  .clk(clk),
+  .reset(!rst_n),
+  .dout(signed_mul)
+);
+
+wire [31:0] unsigned_quotient;
+wire [31:0] unsigned_remainder;
+Integer_Division_Top u_interger_division_top(
+  .clk(clk), 
+  .rstn(rst_n), 
+  .dividend(aluIn1[31]?-aluIn1:aluIn1), 
+  .divisor(aluIn2[31]?-aluIn2:aluIn2), 
+  .remainder(unsigned_remainder), 
+  .quotient(unsigned_quotient) 
+);
+
 // 没有使用节省移位器的方法
 always @(*) begin
+  if (isALUreg && funct7 == 7'b0000001) begin
+    case (funct3)
+      3'b000: aluOut = signed_mul[31:0]; // mul
+      3'b001: aluOut = signed_mul[63:32]; // mulh
+      3'b010: aluOut = signed_mul[63:32] + (aluIn2[31]?aluIn1:32'b0); // mulhsu
+      3'b011: aluOut = signed_mul[63:32] + (aluIn2[31]?aluIn1:32'b0) + (aluIn1[31]?aluIn2:32'b0); // mulhu
+      3'b100: begin // DIV
+        if (aluIn2 == 32'b0) begin
+          aluOut = 32'hFFFFFFFF;
+        end else if (aluIn1 == 32'h80000000 && aluIn2 == 32'hFFFFFFFF) begin // MinInt / -1
+          aluOut = 32'h80000000;
+        end else begin
+          if (aluIn1[31] ^ aluIn2[31]) begin 
+            aluOut = -unsigned_quotient; 
+          end else begin
+            aluOut = unsigned_quotient; 
+          end
+        end
+      end
+      3'b101: begin // DIVU
+        if (aluIn2 == 32'b0) begin
+          aluOut = 32'hFFFFFFFF;
+        end else begin
+          aluOut = unsigned_quotient; 
+        end
+      end
+      3'b110: begin // REM
+        if (aluIn2 == 32'b0) begin
+          aluOut = aluIn1;
+        end else if (aluIn1 == 32'h80000000 && aluIn2 == 32'hFFFFFFFF) begin // MinInt % -1
+          aluOut = 32'b0;
+        end else begin
+          if (aluIn1[31] && unsigned_remainder != 32'b0) begin
+            aluOut = -unsigned_remainder;
+          end else begin
+            aluOut = unsigned_remainder;
+          end
+        end
+      end
+      3'b111: begin // REMU
+        if (aluIn2 == 32'b0) begin
+          aluOut = aluIn1;
+        end else begin
+          aluOut = unsigned_remainder; 
+        end
+      end 
+    endcase
+  end else begin
   case(funct3)
+    // ? problem
     3'b000: aluOut = (funct7[5] & instr[5]) ? aluMinus : aluPlus;
     3'b001: aluOut = aluIn1 << shamt;
     3'b010: aluOut = {31'b0,LT}; 
@@ -140,6 +224,7 @@ always @(*) begin
     3'b110: aluOut = (aluIn1 | aluIn2);
     3'b111: aluOut = (aluIn1 & aluIn2);	
   endcase
+  end
 end
 
 
@@ -169,7 +254,9 @@ assign writeBackData = isALUreg ? aluOut :
                         isAUIPC  ? PCplusImm:
                         isLoad   ? LOAD_data :
                         0;
-assign writeBackEn = (state == EXECUTE&&(isALUreg||isALUimm||isJAL||isJALR||isLUI||isAUIPC)) |
+assign writeBackEn = (state == EXECUTE&&((isALUreg&&!isMex)||isALUimm||isJAL||isJALR||isLUI||isAUIPC)) |
+                      (state == WAIT_Mex2 && isMul) |
+                      (state == WAIT_Mex3 && isDiv) |
                       (state == WAIT_DATA && isLoad); 
 
 wire [31:0] nextPC = (isBranch&&takeBranch) ? PCplusImm :
@@ -226,6 +313,5 @@ wire [3:0] STORE_wmask =
       end
    end
 `endif
-
 
 endmodule

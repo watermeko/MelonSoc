@@ -6,6 +6,14 @@
    "Type" : "verilog"
   },
   {
+   "Path" : "D:/Development/Project/MelonSoc/src/gowin_mult/gowin_mult.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "D:/Development/Project/MelonSoc/src/integer_division/integer_division.v",
+   "Type" : "verilog"
+  },
+  {
    "Path" : "D:/Development/Project/MelonSoc/src/mem.v",
    "Type" : "verilog"
   },
@@ -14,7 +22,7 @@
    "Type" : "verilog"
   },
   {
-   "Path" : "D:/Development/Project/MelonSoc/src/emitter_uart.v",
+   "Path" : "D:/Development/Project/MelonSoc/src/uart.v",
    "Type" : "verilog"
   }
  ],
@@ -24,6 +32,6 @@
  "LoopLimit" : 2000,
  "ResultFile" : "D:/Development/Project/MelonSoc/impl/temp/rtl_parser.result",
  "Top" : "",
- "VerilogStd" : "verilog_2001",
+ "VerilogStd" : "sysv",
  "VhdlStd" : "vhdl_93"
 }

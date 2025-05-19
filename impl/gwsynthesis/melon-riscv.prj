@@ -5,9 +5,11 @@
     <Device id="GW2A-18C" package="PBGA256" speed="8" partNumber="GW2A-LV18PG256C8/I7"/>
     <FileList>
         <File path="D:\Development\Project\MelonSoc\src\cpu.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\gowin_mult\gowin_mult.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\integer_division\integer_division.v" type="verilog"/>
         <File path="D:\Development\Project\MelonSoc\src\mem.v" type="verilog"/>
         <File path="D:\Development\Project\MelonSoc\src\top.v" type="verilog"/>
-        <File path="D:\Development\Project\MelonSoc\src\emitter_uart.v" type="verilog"/>
+        <File path="D:\Development\Project\MelonSoc\src\uart.v" type="verilog"/>
     </FileList>
     <OptionList>
         <Option type="disable_insert_pad" value="0"/>
@@ -17,7 +19,7 @@
         <Option type="print_all_synthesis_warning" value="0"/>
         <Option type="ram_rw_check" value="0"/>
         <Option type="vcc" value="1.0"/>
-        <Option type="verilog_language" value="verilog-2001"/>
+        <Option type="verilog_language" value="sysv-2017"/>
         <Option type="vhdl_language" value="vhdl-1993"/>
     </OptionList>
 </Project>

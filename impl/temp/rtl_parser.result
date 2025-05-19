@@ -21,15 +21,53 @@
     "InstName" : "u_cpu",
     "ModuleFile" : "D:/Development/Project/MelonSoc/src/cpu.v",
     "ModuleLine" : 1,
-    "ModuleName" : "cpu"
+    "ModuleName" : "cpu",
+    "SubInsts" : [
+     {
+      "InstFile" : "D:/Development/Project/MelonSoc/src/cpu.v",
+      "InstLine" : 146,
+      "InstName" : "u_gowin_mult",
+      "ModuleFile" : "D:/Development/Project/MelonSoc/src/gowin_mult/gowin_mult.v",
+      "ModuleLine" : 10,
+      "ModuleName" : "Gowin_MULT"
+     },
+     {
+      "InstFile" : "D:/Development/Project/MelonSoc/src/cpu.v",
+      "InstLine" : 157,
+      "InstName" : "u_interger_division_top",
+      "ModuleFile" : "D:/Development/Project/MelonSoc/src/integer_division/integer_division.v",
+      "ModuleLine" : 6616,
+      "ModuleName" : "Integer_Division_Top",
+      "SubInsts" : [
+       {
+        "InstFile" : "D:/Development/Project/MelonSoc/src/integer_division/integer_division.v",
+        "InstLine" : 6633,
+        "InstName" : "integer_division_inst",
+        "ModuleFile" : "D:/Development/Project/MelonSoc/src/integer_division/integer_division.v",
+        "ModuleLine" : 10,
+        "ModuleName" : "(integer_division)/(Integer_Division_Top)"
+       }
+      ]
+     }
+    ]
    },
    {
     "InstFile" : "D:/Development/Project/MelonSoc/src/top.v",
-    "InstLine" : 64,
-    "InstName" : "u_emitter_uart",
-    "ModuleFile" : "D:/Development/Project/MelonSoc/src/emitter_uart.v",
+    "InstLine" : 61,
+    "InstName" : "u_uart",
+    "ModuleFile" : "D:/Development/Project/MelonSoc/src/uart.v",
     "ModuleLine" : 1,
-    "ModuleName" : "corescore_emitter_uart"
+    "ModuleName" : "uart",
+    "SubInsts" : [
+     {
+      "InstFile" : "D:/Development/Project/MelonSoc/src/uart.v",
+      "InstLine" : 14,
+      "InstName" : "u_uart_tx",
+      "ModuleFile" : "D:/Development/Project/MelonSoc/src/uart.v",
+      "ModuleLine" : 25,
+      "ModuleName" : "uart_tx"
+     }
+    ]
    }
   ]
  }

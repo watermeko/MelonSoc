@@ -1,5 +1,6 @@
 .section .text.init 
 .global _start      
+.global putchar     # 使 putchar 对 C 可见
 
 .equ wait_bit, 1
 
@@ -16,21 +17,13 @@
 
 
 _start:
-    li sp, RAM_BASE_ADDR
-    li gp, IO_BASE_ADDR
-    la t0, colormap
-    # lb a0 , 4(t0)
-L0_:
-    li a0, 78
-    call putc_
-    li a0, 10 # Newline
-    call putc_
-    li a0, 79 
-    call putc_ 
-    li a0, 10
-    call putc_
-    j L0_
-    ebreak
+    li sp, RAM_BASE_ADDR        # 初始化堆栈指针
+    li gp, IO_BASE_ADDR         # 初始化全局指针 (putchar 会使用它)
+    call main                   # 调用 C main 函数
+
+_halt:
+    ebreak                      # main 函数返回后停止处理器
+    j _halt                     # 无限循环
 
 
 wait_:
@@ -41,19 +34,12 @@ wait_L0_:
     bnez t0, wait_L0_
     ret
 
-putc_:
-    sw a0, IO_UART_DAT_OFFSET(gp)
-    li t0, 1<<9
-putc_L0_:
-    lw t1, IO_UART_CTRL_OFFSET(gp)
-    and t1, t1, t0
-    bnez t1, putc_L0_
-    ret
-
-
-.data
-.align 2 # Ensure data alignment (optional for .byte, good practice)
-colormap:
-    .byte ' ', '.', ',', ':'
-    .byte ';', 'o', 'x', '%'
-    .byte '#', '@', 0, 0   # Null terminators or special values from original
+putchar:                        # 通过 UART 输出字符的函数
+    # a0 包含要打印的字符
+    sw a0, IO_UART_DAT_OFFSET(gp) # 将字符写入 UART 数据寄存器
+    li t0, 1<<9                   # UART TX 繁忙位掩码 (假设 CTRL 寄存器的第 9 位是 TX 繁忙)
+putchar_busy_wait_L0_:
+    lw t1, IO_UART_CTRL_OFFSET(gp) # 读取 UART 控制/状态寄存器
+    and t1, t1, t0                # 检查繁忙位是否设置
+    bnez t1, putchar_busy_wait_L0_ # 如果繁忙则循环
+    ret                           # 从 putchar 返回

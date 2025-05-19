@@ -6,9 +6,11 @@
     <Device name="GW2A-18C" pn="GW2A-LV18PG256C8/I7">gw2a18c-011</Device>
     <FileList>
         <File path="src/cpu.v" type="file.verilog" enable="1"/>
-        <File path="src/emitter_uart.v" type="file.verilog" enable="1"/>
+        <File path="src/gowin_mult/gowin_mult.v" type="file.verilog" enable="1"/>
+        <File path="src/integer_division/integer_division.v" type="file.verilog" enable="1"/>
         <File path="src/mem.v" type="file.verilog" enable="1"/>
         <File path="src/top.v" type="file.verilog" enable="1"/>
+        <File path="src/uart.v" type="file.verilog" enable="1"/>
         <File path="src/melon-riscv.cst" type="file.cst" enable="1"/>
     </FileList>
 </Project>

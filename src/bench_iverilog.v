@@ -15,7 +15,9 @@ module bench();
       .rxd(rxd_tb),     // Corrected: soc input rxd driven by testbench reg
       .txd(txd_tb)      // Corrected: soc output txd drives testbench wire
     );
-
+    GSR GSR(
+    .GSRI(1'b1)
+    );
     reg[5:0] prev_LEDS = 6'bxxxxxx; // Initialize with X to catch the first actual value
 
     initial begin
@@ -52,5 +54,6 @@ module bench();
         $display("Simulation timed out!");
         $finish;
     end
+
 
 endmodule
