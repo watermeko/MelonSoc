@@ -22,7 +22,7 @@ always @(posedge clk) begin
 end
 
 initial begin
-    $readmemh("build/program.hex", MEM);
+    $readmemh("../build/program.hex", MEM);
     `ifdef BENCH
     $display("%h",MEM[0]);
     $display("%h",MEM[1]);

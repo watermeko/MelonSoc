@@ -8,6 +8,16 @@ IVERILOG = iverilog
 VVP = vvp
 SIM_OUTPUT = build/a.out 
 
+RTL_DIR = rtl
+SIM_DIR = sim
+IP_DIR = ip
+
+RTL_SOURCES = $(addprefix $(RTL_DIR)/, top.v mem.v cpu.v uart.v)
+IP_SOURCES = $(IP_DIR)/gowin_mult/gowin_mult.v $(IP_DIR)/integer_division/integer_division.vo
+SIM_BENCH = $(SIM_DIR)/bench_iverilog.v
+SIM_CPP = $(SIM_DIR)/bench.cpp
+SIM_LIB = $(SIM_DIR)/prim_sim.v
+
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
 _C_SOURCES = program/print.c
@@ -15,7 +25,7 @@ LINKER_SCRIPT = program/linker.ld
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
 
-VERILOG_SOURCES = top.v mem.v  cpu.v uart.v gowin_mult/gowin_mult.v integer_division/integer_division.vo 
+VERILOG_SOURCES = $(RTL_SOURCES) $(IP_SOURCES)
 BUILD_DIR = build
 
 TARGET_ELF = $(BUILD_DIR)/$(TARGET_NAME).elf
@@ -98,14 +108,14 @@ load_flash:
 
 simulate: build $(VERILOG_SOURCES)
 	@echo "Compiling Verilog sources for simulation..."
-	$(IVERILOG) $(IVERILOG_FLAGS) -o $(SIM_OUTPUT) $(VERILOG_SOURCES) bench_iverilog.v -lprim_sim.v
+	$(IVERILOG) $(IVERILOG_FLAGS) -o $(SIM_OUTPUT) $(VERILOG_SOURCES) $(SIM_BENCH) -l$(SIM_LIB)
 	@echo "Running simulation..."
 	$(VVP) $(SIM_OUTPUT)
 	@echo "Simulation finished."
 
-simulate_verilator: build $(VERILOG_SOURCES) bench.cpp
+simulate_verilator: build $(VERILOG_SOURCES) $(SIM_CPP)
 	@echo "Running Verilator to compile Verilog sources..."
-	verilator -DBENCH -Wno-fatal --top-module SOC -cc -exe bench.cpp $(VERILOG_SOURCES) prim_sim.v --Mdir obj_dir --bbox-unsup
+	verilator -DBENCH -Wno-fatal --top-module SOC -cc -exe $(SIM_CPP) $(VERILOG_SOURCES) $(SIM_LIB) --Mdir obj_dir --bbox-unsup
 	@echo "Building Verilator simulation executable..."
 	$(MAKE) -C obj_dir -f VSOC.mk
 	@echo "Running Verilator simulation..."
