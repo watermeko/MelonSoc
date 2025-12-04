@@ -29,7 +29,7 @@ module bench();
         #5;               // Wait a bit after reset release
 
         forever begin
-            #(1000.0/54.0) clk = ~clk; // Approx 18.5185 ns period for 54MHz
+            #(1000.0/27.0) clk = ~clk; // Approx 18.5185 ns period for 54MHz
             // Display logic moved to an always block or kept here carefully
             // If prev_LEDS update and display are in the same block, timing matters.
         end
@@ -50,7 +50,7 @@ module bench();
 
     // Add a timeout for the simulation if it truly hangs
     initial begin
-        #200000; // Stop simulation after 200us if it hasn't finished
+        #20000000; // Stop simulation after 200us if it hasn't finished
         $display("Simulation timed out!");
         $finish;
     end

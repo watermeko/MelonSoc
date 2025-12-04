@@ -4,7 +4,7 @@
 
 .equ wait_bit, 1
 
-.equ RAM_BASE_ADDR, 0x6000  # 24KB RAM顶端地址，用于栈指针初始化
+.equ RAM_BASE_ADDR, 0x20000  # DATARAM顶端地址 (64KB数据内存)，用于栈指针初始化
 .equ IO_BASE_ADDR, 0x400000
 
 .equ IO_LEDS_BIT, 0

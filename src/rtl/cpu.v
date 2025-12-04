@@ -1,11 +1,18 @@
 module cpu(
     input clk,
     input rst_n,
-    output [31:0] mem_addr,
-    input [31:0] mem_rdata,
-    output mem_ren,
-    output [31:0] mem_wdata,
-    output [3:0] mem_wmask
+
+    // 指令接口
+    output [31:0] instr_addr,
+    input [31:0] instr_rdata,
+    output instr_ren,
+
+    // 数据接口
+    output [31:0] data_addr,
+    input [31:0] data_rdata,
+    output data_ren,
+    output [31:0] data_wdata,
+    output [3:0] data_wmask
 );
 
 reg [31:0] PC=0;
@@ -64,9 +71,9 @@ reg [3:0] state = FETCH_INSTR;
 
 always @(posedge clk or negedge rst_n) begin
   // `ifdef  BENCH
-  // if (PC <= 32'd20) begin
-  // $display("T=%0t CPU: clk=%b rst_n=%b PC=%h state=%d instr=%h mem_ren=%b mem_wmask=%b mem_addr=%h cpu.isStore=%b cpu.isSYSTEM=%b",
-  //            $time, clk, rst_n, PC, state, instr, mem_ren, mem_wmask, mem_addr, isStore, isSYSTEM); // 添加你关心的信号
+  // if (PC <= 32'd100) begin
+  // $display("T=%0t CPU: PC=%h state=%d instr=%h instr_rdata=%h rs1=%h rs2=%h",
+  //            $time, PC, state, instr, instr_rdata, rs1, rs2);
   // end
   // `endif 
   if (!rst_n) begin
@@ -76,9 +83,9 @@ always @(posedge clk or negedge rst_n) begin
   end else begin
     if(writeBackEn && rdId != 0) begin
       reg_bank[rdId] <= writeBackData;
-`ifdef BENCH	 
-      $display("x%0d <= %b",rdId,writeBackData);
-`endif	
+// `ifdef BENCH	 
+//       $display("x%0d <= %b",rdId,writeBackData);
+// `endif	
     end
 
     case (state)
@@ -86,9 +93,10 @@ always @(posedge clk or negedge rst_n) begin
         state <= WAIT_INSTR;
       end
       WAIT_INSTR: begin
-        instr <= mem_rdata;
-        rs1 <= reg_bank[mem_rdata[19:15]];
-        rs2 <= reg_bank[mem_rdata[24:20]];
+        // 在 WAIT_INSTR 锁存指令并读取寄存器
+        instr <= instr_rdata;
+        rs1 <= reg_bank[instr_rdata[19:15]];
+        rs2 <= reg_bank[instr_rdata[24:20]];
         state <= EXECUTE;
       end
       EXECUTE: begin
@@ -281,28 +289,33 @@ wire [31:0] nextPC = (isBranch&&takeBranch) ? PCplusImm :
 
 
 // ----------------------MEMORY----------------------
-assign mem_addr =(state == WAIT_INSTR || state == FETCH_INSTR) ? PC : loadstore_addr;
-assign mem_ren = (state == FETCH_INSTR || state == LOAD);
-assign mem_wmask =  {4{(state == STORE)}} & STORE_wmask; 
+// 指令地址（固定为 PC）
+assign instr_addr = PC;
+assign instr_ren = (state == FETCH_INSTR || state == WAIT_INSTR);
+
+// 数据地址（LOAD/STORE 时是 rs1+offset）
+assign data_addr = loadstore_addr;
+assign data_ren = (state == LOAD);
+assign data_wmask =  {4{(state == STORE)}} & STORE_wmask; 
 // MEM LOAD
 wire [31:0] loadstore_addr = rs1 + (isStore ? Simm : Iimm);
 
 wire mem_byteAccess = funct3[1:0] == 2'b00;
 wire mem_halfwordAccess = funct3[1:0] == 2'b01;
 
-wire [15:0] LOAD_half = loadstore_addr[1] ? mem_rdata[31:16] : mem_rdata[15:0];
+wire [15:0] LOAD_half = loadstore_addr[1] ? data_rdata[31:16] : data_rdata[15:0];
 wire [7:0] LOAD_byte = loadstore_addr[0] ? LOAD_half[15:8] : LOAD_half[7:0];
 
 wire LOAD_sign = !funct3[2] & (mem_byteAccess ? LOAD_byte[7] : LOAD_half[15]);
 wire [31:0] LOAD_data = mem_byteAccess ? {{24{LOAD_sign}},LOAD_byte} :
                           mem_halfwordAccess ? {{16{LOAD_sign}},LOAD_half} :
-                          mem_rdata;
+                          data_rdata;
 
 // MEM STORE
-assign mem_wdata[7:0] = rs2[7:0];
-assign mem_wdata[15:8] = loadstore_addr[0] ? rs2[7:0] : rs2[15:8];
-assign mem_wdata[23:16] = loadstore_addr[1] ? rs2[7:0] : rs2[23:16];
-assign mem_wdata[31:24] = loadstore_addr[0] ? rs2[7:0] :
+assign data_wdata[7:0] = rs2[7:0];
+assign data_wdata[15:8] = loadstore_addr[0] ? rs2[7:0] : rs2[15:8];
+assign data_wdata[23:16] = loadstore_addr[1] ? rs2[7:0] : rs2[23:16];
+assign data_wdata[31:24] = loadstore_addr[0] ? rs2[7:0] :
                           loadstore_addr[1] ? rs2[15:8] : rs2[31:24];
 
 wire [3:0] STORE_wmask =

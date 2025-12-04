@@ -21,7 +21,7 @@ SIM_LIB = $(SIM_DIR)/prim_sim.v
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
 _C_SOURCES = program/print.c
-LINKER_SCRIPT = program/linker.ld      
+LINKER_SCRIPT = program/linker_pipeline.ld      
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
 
@@ -31,6 +31,10 @@ BUILD_DIR = build
 TARGET_ELF = $(BUILD_DIR)/$(TARGET_NAME).elf
 TARGET_BIN = $(BUILD_DIR)/$(TARGET_NAME).bin
 TARGET_HEX = $(BUILD_DIR)/$(TARGET_NAME).hex
+TARGET_TEXT_BIN = $(BUILD_DIR)/program_text.bin
+TARGET_DATA_BIN = $(BUILD_DIR)/program_data.bin
+TARGET_PROGROM_HEX = $(BUILD_DIR)/PROGROM.hex
+TARGET_DATARAM_HEX = $(BUILD_DIR)/DATARAM.hex
 
 BIN2HEX_UTIL_NAME = bin_to_verilog_hex
 ifeq ($(OS),Windows_NT)
@@ -57,8 +61,10 @@ dirs:
 	@echo "Ensuring build directory $(BUILD_DIR) exists..."
 	@mkdir -p $(BUILD_DIR)
 
-build: $(TARGET_HEX)
-	@echo "Build complete. Final HEX file: $(TARGET_HEX)"
+build: $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX)
+	@echo "Build complete!"
+	@echo "  PROGROM: $(TARGET_PROGROM_HEX)"
+	@echo "  DATARAM: $(TARGET_DATARAM_HEX)"
 
 $(BIN2HEX_EXECUTABLE): $(BIN2HEX_C_SRC) | dirs
 	@echo "Compiling host utility: $< -> $@"
@@ -95,6 +101,33 @@ $(TARGET_BIN): $(TARGET_ELF) dirs
 $(TARGET_HEX): $(TARGET_BIN) $(BIN2HEX_EXECUTABLE) | dirs
 	@echo "Converting $< to $@ using $(BIN2HEX_EXECUTABLE)"
 	$(BIN2HEX_EXECUTABLE) $< > $@
+
+# 提取 .text 段 (指令存储器)
+$(TARGET_TEXT_BIN): $(TARGET_ELF) | dirs
+	@echo "Extracting .text section to $@"
+	$(OBJCOPY) -O binary --only-section=.text $< $@
+
+# 提取 .rodata 和 .data 段 (数据存储器)
+$(TARGET_DATA_BIN): $(TARGET_ELF) | dirs
+	@echo "Extracting .rodata and .data sections to $@"
+	$(OBJCOPY) -O binary --only-section=.rodata --only-section=.data $< $@
+	@if [ ! -s $@ ]; then echo "Warning: .rodata and .data sections are empty, creating minimal file"; touch $@; fi
+
+# 转换为 PROGROM.hex
+$(TARGET_PROGROM_HEX): $(TARGET_TEXT_BIN) $(BIN2HEX_EXECUTABLE) | dirs
+	@echo "Converting $< to $@"
+	$(BIN2HEX_EXECUTABLE) $< > $@
+	@echo "  Lines in PROGROM.hex: $$(wc -l < $@)"
+
+# 转换为 DATARAM.hex
+$(TARGET_DATARAM_HEX): $(TARGET_DATA_BIN) $(BIN2HEX_EXECUTABLE) | dirs
+	@echo "Converting $< to $@"
+	@if [ -s $< ]; then \
+		$(BIN2HEX_EXECUTABLE) $< > $@; \
+	else \
+		echo "00000000" > $@; \
+	fi
+	@echo "  Lines in DATARAM.hex: $$(wc -l < $@)"
 
 load:
 	@echo "Loading bitstream to FPGA SRAM..."
