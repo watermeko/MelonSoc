@@ -4,7 +4,7 @@ ENTRY(_start) /* 与 .s 文件中的标签对应 */
 MEMORY {
   /* 定义您的指令存储器区域，起始地址和大小应与Verilog中的MEM对应 */
   /* 将其标记为 rwx，因为 .data, .bss 和堆栈将位于此处 */
-  IMEM (rwx) : ORIGIN = 0x00000000, LENGTH = 0x5ff0 /* 确保 LENGTH 足够大 */
+  IMEM (rwx) : ORIGIN = 0x00000000, LENGTH = 0x6000 /* 完整24KB (24576字节) */
 }
 
 SECTIONS {

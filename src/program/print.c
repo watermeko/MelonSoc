@@ -68,7 +68,9 @@ extern int putchar(int c);
 int main() {
     // 调用您的打印函数进行测试
     printf("Hello from C! Value: %d, Hex: %x\n", 123, 0xABC);
-    puts("This is a test string.");
+    printf("Test mult:%d * %d = %d\n", 7, 6, 7*6);
+    printf("Test div:%d / %d = %d\n", 20, 3, 20/3);
+    puts("This is a test string.\n");
     // 程序将在此处返回到 program.s 中的 _halt 标签
     return 0;
 }

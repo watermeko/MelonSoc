@@ -39,6 +39,9 @@ wire [6:0] funct7 = instr[31:25];
 reg [31:0] reg_bank [0:31];
 reg [31:0] rs1;
 reg [31:0] rs2;
+// 锁存除法器的输入，避免在等待期间被覆盖
+reg [31:0] div_operand1;
+reg [31:0] div_operand2;
 wire [31:0] writeBackData;
 wire        writeBackEn;
 
@@ -90,10 +93,15 @@ always @(posedge clk or negedge rst_n) begin
         if(!isSYSTEM) begin
           PC <= nextPC;
         end
+        // 在进入除法等待状态前，锁存操作数
+        if (isMex) begin
+          div_operand1 <= rs1;
+          div_operand2 <= rs2;
+        end
         state <= isLoad ? LOAD :
                   isStore ? STORE :
                   isMex ? WAIT_Mex :
-                  FETCH_INSTR; 
+                  FETCH_INSTR;
       end
       LOAD: begin
         state <= WAIT_DATA;
@@ -153,13 +161,16 @@ Gowin_MULT u_gowin_mult(
 
 wire [31:0] unsigned_quotient;
 wire [31:0] unsigned_remainder;
+// 使用锁存的操作数作为除法器输入
+wire [31:0] div_dividend = div_operand1[31] ? -div_operand1 : div_operand1;
+wire [31:0] div_divisor = div_operand2[31] ? -div_operand2 : div_operand2;
 Integer_Division_Top u_interger_division_top(
-  .clk(clk), 
-  .rstn(rst_n), 
-  .dividend(aluIn1[31]?-aluIn1:aluIn1), 
-  .divisor(aluIn2[31]?-aluIn2:aluIn2), 
-  .remainder(unsigned_remainder), 
-  .quotient(unsigned_quotient) 
+  .clk(clk),
+  .rstn(rst_n),
+  .dividend(div_dividend),
+  .divisor(div_divisor),
+  .remainder(unsigned_remainder),
+  .quotient(unsigned_quotient)
 );
 
 // 没有使用节省移位器的方法
@@ -170,46 +181,46 @@ always @(*) begin
       3'b001: aluOut = signed_mul[63:32]; // mulh
       3'b010: aluOut = signed_mul[63:32] + (aluIn2[31]?aluIn1:32'b0); // mulhsu
       3'b011: aluOut = signed_mul[63:32] + (aluIn2[31]?aluIn1:32'b0) + (aluIn1[31]?aluIn2:32'b0); // mulhu
-      3'b100: begin // DIV
-        if (aluIn2 == 32'b0) begin
+      3'b100: begin // DIV - 使用锁存的操作数
+        if (div_operand2 == 32'b0) begin
           aluOut = 32'hFFFFFFFF;
-        end else if (aluIn1 == 32'h80000000 && aluIn2 == 32'hFFFFFFFF) begin // MinInt / -1
+        end else if (div_operand1 == 32'h80000000 && div_operand2 == 32'hFFFFFFFF) begin // MinInt / -1
           aluOut = 32'h80000000;
         end else begin
-          if (aluIn1[31] ^ aluIn2[31]) begin 
-            aluOut = -unsigned_quotient; 
+          if (div_operand1[31] ^ div_operand2[31]) begin
+            aluOut = -unsigned_quotient;
           end else begin
-            aluOut = unsigned_quotient; 
+            aluOut = unsigned_quotient;
           end
         end
       end
-      3'b101: begin // DIVU
-        if (aluIn2 == 32'b0) begin
+      3'b101: begin // DIVU - 使用锁存的操作数
+        if (div_operand2 == 32'b0) begin
           aluOut = 32'hFFFFFFFF;
         end else begin
-          aluOut = unsigned_quotient; 
+          aluOut = unsigned_quotient;
         end
       end
-      3'b110: begin // REM
-        if (aluIn2 == 32'b0) begin
-          aluOut = aluIn1;
-        end else if (aluIn1 == 32'h80000000 && aluIn2 == 32'hFFFFFFFF) begin // MinInt % -1
+      3'b110: begin // REM - 使用锁存的操作数
+        if (div_operand2 == 32'b0) begin
+          aluOut = div_operand1;
+        end else if (div_operand1 == 32'h80000000 && div_operand2 == 32'hFFFFFFFF) begin // MinInt % -1
           aluOut = 32'b0;
         end else begin
-          if (aluIn1[31] && unsigned_remainder != 32'b0) begin
+          if (div_operand1[31] && unsigned_remainder != 32'b0) begin
             aluOut = -unsigned_remainder;
           end else begin
             aluOut = unsigned_remainder;
           end
         end
       end
-      3'b111: begin // REMU
-        if (aluIn2 == 32'b0) begin
-          aluOut = aluIn1;
+      3'b111: begin // REMU - 使用锁存的操作数
+        if (div_operand2 == 32'b0) begin
+          aluOut = div_operand1;
         end else begin
-          aluOut = unsigned_remainder; 
+          aluOut = unsigned_remainder;
         end
-      end 
+      end
     endcase
   end else begin
   case(funct3)
