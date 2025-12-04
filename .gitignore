@@ -1,2 +1,7 @@
 src/build/
 src/obj_dir/
+
+impl/
+!impl/*.json
+.claude/
+CLAUDE.md

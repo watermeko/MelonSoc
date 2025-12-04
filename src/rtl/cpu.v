@@ -52,12 +52,13 @@ localparam EXECUTE = 2;
 localparam LOAD = 3;
 localparam WAIT_DATA = 4;
 localparam STORE = 5;
-localparam WAIT_Mex = 6;
-localparam WAIT_Mex2 = 7;
-localparam WAIT_Mex3 = 8;
-// localparam MUL_LATENCY = 0; 
+localparam WAIT_COMPUTE = 6;  // 统一的计算等待状态
 
-// reg [$clog2(MUL_LATENCY > 0 ? MUL_LATENCY : 1)-1:0] mul_wait_counter; 
+// 定义各种计算的延迟周期
+localparam MUL_LATENCY = 2;   // 乘法需要等待2个周期
+localparam DIV_LATENCY = 3;   // 除法需要等待3个周期
+// localparam FPU_LATENCY = 4; // 未来可能添加的浮点运算
+reg [2:0] compute_wait_counter; // 计算等待计数器
 
 reg [3:0] state = FETCH_INSTR;
 
@@ -71,11 +72,12 @@ always @(posedge clk or negedge rst_n) begin
   if (!rst_n) begin
     state <= FETCH_INSTR;
     PC <= 0;
+    compute_wait_counter <= 0;
   end else begin
     if(writeBackEn && rdId != 0) begin
       reg_bank[rdId] <= writeBackData;
 `ifdef BENCH	 
-	    $display("x%0d <= %b",rdId,writeBackData);
+      $display("x%0d <= %b",rdId,writeBackData);
 `endif	
     end
 
@@ -93,15 +95,20 @@ always @(posedge clk or negedge rst_n) begin
         if(!isSYSTEM) begin
           PC <= nextPC;
         end
-        // 在进入除法等待状态前，锁存操作数
         if (isMex) begin
           div_operand1 <= rs1;
           div_operand2 <= rs2;
+          // 根据指令类型设置等待周期
+          if (isMul) begin
+            compute_wait_counter <= MUL_LATENCY;
+          end else if (isDiv) begin
+            compute_wait_counter <= DIV_LATENCY;
+          end
         end
         state <= isLoad ? LOAD :
-                  isStore ? STORE :
-                  isMex ? WAIT_Mex :
-                  FETCH_INSTR;
+                 isStore ? STORE :
+                 isMex ? WAIT_COMPUTE :
+                 FETCH_INSTR;
       end
       LOAD: begin
         state <= WAIT_DATA;
@@ -112,18 +119,12 @@ always @(posedge clk or negedge rst_n) begin
       STORE: begin
         state <= FETCH_INSTR;
       end
-      WAIT_Mex: begin
-        state <= WAIT_Mex2;
-      end
-      WAIT_Mex2: begin
-        if (isDiv) begin
-          state <= WAIT_Mex3; // div 
-        end else begin
+      WAIT_COMPUTE: begin
+        if (compute_wait_counter == 1) begin
           state <= FETCH_INSTR;
+        end else begin
+          compute_wait_counter <= compute_wait_counter - 1;
         end
-      end
-      WAIT_Mex3: begin
-        state <= FETCH_INSTR;
       end
     endcase
   end
@@ -265,9 +266,8 @@ assign writeBackData = isALUreg ? aluOut :
                         isLoad   ? LOAD_data :
                         0;
 assign writeBackEn = (state == EXECUTE&&((isALUreg&&!isMex)||isALUimm||isJAL||isJALR||isLUI||isAUIPC)) |
-                      (state == WAIT_Mex2 && isMul) |
-                      (state == WAIT_Mex3 && isDiv) |
-                      (state == WAIT_DATA && isLoad); 
+                     (state == WAIT_COMPUTE && compute_wait_counter == 1) |
+                     (state == WAIT_DATA && isLoad); 
 
 wire [31:0] nextPC = (isBranch&&takeBranch) ? PCplusImm :
                         isJALR   ? {aluPlus[31:1],1'b0} :
