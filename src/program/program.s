@@ -16,13 +16,13 @@
 
 
 _start:
-    li sp, RAM_BASE_ADDR        # 初始化堆栈指针
-    la gp, __global_pointer$    # 初始化全局指针，供编译器访问小数据
-    call main                   # 调用 C main 函数
+    li sp, RAM_BASE_ADDR        
+    la gp, __global_pointer$    
+    call main                   
 
 _halt:
-    ebreak                      # main 函数返回后停止处理器
-    j _halt                     # 无限循环
+    ebreak                      
+    j _halt                     
 
 
 wait_:

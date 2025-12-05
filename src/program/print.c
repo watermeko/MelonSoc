@@ -1,5 +1,6 @@
 #include <stdarg.h>
 #include "uart.h"
+#include "gpio.h"
 
 void print_hex_digits(unsigned int val, int nbdigits);
 
@@ -65,27 +66,130 @@ int printf(const char *fmt,...)
     return 0;
 }
 
-int main() {
-    uart_init();
+static void shell_help(void) {
+    puts("Commands:");
+    puts("  help               - show this help");
+    puts("  led <6-bit-bin>    - set LEDs, e.g. led 101010");
+    puts("  print <text>       - print text");
+}
 
-    // 调用您的打印函数进行测试
-    printf("Hello from C! Value: %d, Hex: %x\n", 123, 0xABC);
-    printf("Test mult:%d * %d = %d\n", 7, 6, 7*6);
-    printf("Test div:%d / %d = %d\n", 20, 3, 20/3);
-    puts("This is a test string.\n");
-
-    printf("UART RX demo: waiting for a character...\n");
-    int rx_char = uart_getc_blocking();
-    printf("UART RX demo captured: %c (0x%x)\n", rx_char, rx_char);
-    printf("Echoing back everything you type.\n");
-
-    while (1) {
-        int ch = uart_getc_blocking();
-        if (ch == '\r')
-            putchar('\n');
-        putchar(ch);
+static void shell_set_leds(const char *arg) {
+    if (arg == 0 || *arg == 0) {
+        puts("Usage: led <6-bit-binary>");
+        return;
     }
 
-    // 程序将在此处返回到 program.s 中的 _halt 标签
+    uint8_t value = 0;
+    int count = 0;
+    while (arg[count] == '0' || arg[count] == '1') {
+        value = (value << 1) | (arg[count] - '0');
+        count++;
+        if (count > 6)
+            break;
+    }
+
+    if (count != 6 || (arg[count] != 0 && arg[count] != ' ')) {
+        puts("Error: provide exactly 6 binary digits, e.g. led 101010");
+        return;
+    }
+
+    gpio_set_leds(value);
+    uint8_t actual = gpio_get_leds();
+    printf("LEDs set to 0b");
+    for (int bit = 5; bit >= 0; --bit)
+        putchar(((value >> bit) & 1) ? '1' : '0');
+    printf(" (readback 0b");
+    for (int bit = 5; bit >= 0; --bit)
+        putchar(((actual >> bit) & 1) ? '1' : '0');
+    puts(")");
+}
+
+static void shell_print_text(const char *arg) {
+    if (!arg || *arg == 0) {
+        puts("Usage: print <text>");
+        return;
+    }
+    puts(arg);
+}
+
+static int str_equals(const char *a, const char *b) {
+    while (*a && *b) {
+        if (*a != *b)
+            return 0;
+        ++a;
+        ++b;
+    }
+    return (*a == 0 && *b == 0);
+}
+
+static int read_line(char *buf, int maxlen) {
+    int idx = 0;
+    while (idx < maxlen - 1) {
+        int ch = uart_getc_blocking();
+        if (ch == '\r')
+            ch = '\n';
+
+        if (ch == '\n') {
+            putchar('\r');
+            putchar('\n');
+            break;
+        }
+
+        if (ch == 0x7f || ch == '\b') {
+            if (idx > 0) {
+                idx--;
+                putchar('\b');
+                putchar(' ');
+                putchar('\b');
+            }
+            continue;
+        }
+
+        putchar(ch);
+        buf[idx++] = ch;
+    }
+    buf[idx] = 0;
+    return idx;
+}
+
+int main() {
+    uart_init();
+    gpio_init();
+
+    puts("Simple shell ready. Type 'help' for commands.");
+
+    char line[128];
+    while (1) {
+        printf("> ");
+        int len = read_line(line, sizeof(line));
+        if (len <= 0)
+            continue;
+        char *cmd = line;
+        while (*cmd == ' ')
+            ++cmd;
+
+        if (*cmd == 0)
+            continue;
+
+        char *arg = cmd;
+        while (*arg && *arg != ' ')
+            ++arg;
+        if (*arg) {
+            *arg++ = 0;
+            while (*arg == ' ')
+                ++arg;
+        }
+
+        if (str_equals(cmd, "help")) {
+            shell_help();
+        } else if (str_equals(cmd, "led")) {
+            shell_set_leds(arg);
+        } else if (str_equals(cmd, "print")) {
+            shell_print_text(arg);
+        } else {
+            puts("Unknown command. Type 'help'.");
+        }
+    }
+
     return 0;
 }

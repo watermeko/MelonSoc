@@ -1,24 +1,19 @@
 OUTPUT_ARCH(riscv)
-ENTRY(_start) /* 与 .s 文件中的标签对应 */
+ENTRY(_start) 
 
 MEMORY {
-  /* 指令存储器：64KB 只读 */
   PROGROM (rx) : ORIGIN = 0x00000000, LENGTH = 0x10000  /* 64KB */
-
-  /* 数据存储器：64KB 读写 */
   DATARAM (rw) : ORIGIN = 0x00010000, LENGTH = 0x10000  /* 64KB */
 }
 
 SECTIONS {
-  /* 代码段 → PROGROM */
   .text : {
-    *(.text.init)    /* 启动代码必须在最前面 */
+    *(.text.init)    
     *(.text)
     *(.text.*)
     . = ALIGN(4);
   } > PROGROM
 
-  /* 只读数据段 → DATARAM（因为需要通过 LOAD 指令访问）*/
   .rodata : {
     . = ALIGN(4);
     *(.rodata)
@@ -26,7 +21,6 @@ SECTIONS {
     . = ALIGN(4);
   } > DATARAM
 
-  /* 已初始化数据段 → DATARAM */
   .data : {
     . = ALIGN(4);
     _sdata = .;                /* 数据段在 DATARAM 中的起始地址 */
@@ -36,7 +30,6 @@ SECTIONS {
     _edata = .;
   } > DATARAM
 
-  /* 未初始化数据段 → DATARAM */
   .bss : {
     . = ALIGN(4);
     _sbss = .;
@@ -47,7 +40,6 @@ SECTIONS {
     _ebss = .;
   } > DATARAM
 
-  /* RISC-V 工具链期望 __global_pointer$ 指向小数据区域附近 */
   PROVIDE(__global_pointer$ = _sdata + 0x800);
 
   /* 栈顶地址（DATARAM 顶端） */

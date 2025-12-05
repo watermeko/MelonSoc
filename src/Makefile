@@ -20,7 +20,7 @@ SIM_LIB = $(SIM_DIR)/prim_sim.v
 
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
-_C_SOURCES = program/print.c program/uart.c
+_C_SOURCES = program/print.c program/uart.c program/gpio.c
 LINKER_SCRIPT = program/linker_pipeline.ld      
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
