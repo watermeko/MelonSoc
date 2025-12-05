@@ -47,6 +47,9 @@ SECTIONS {
     _ebss = .;
   } > DATARAM
 
+  /* RISC-V 工具链期望 __global_pointer$ 指向小数据区域附近 */
+  PROVIDE(__global_pointer$ = _sdata + 0x800);
+
   /* 栈顶地址（DATARAM 顶端） */
   PROVIDE(_stack_top = ORIGIN(DATARAM) + LENGTH(DATARAM));  /* 0x20000 */
 }

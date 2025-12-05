@@ -1,16 +1,27 @@
-module uart(
+module uart #(
+    parameter CLK_FREQ = 27_000_000,
+    parameter UART_BAUD = 115200,
+    parameter UART_RX_FIFO_DEPTH = 16
+)(
     input clk,
     input rst_n,
-
+    input rxd,
     input [7:0] tx_data,
     input tx_valid,
     output tx_ready,
-    output txd
+    output txd,
+    output [7:0] rx_data,
+    output rx_valid,
+    input rx_ready,
+    input clear_overrun,
+    input clear_frame_err,
+    output rx_overrun,
+    output rx_frame_err
 );
 
 uart_tx #(
-    .CLK_FREQ(27_000_000),
-    .UART_BAUD(115200)
+    .CLK_FREQ(CLK_FREQ),
+    .UART_BAUD(UART_BAUD)
 ) u_uart_tx (
     .clk(clk),
     .rst_n(rst_n),
@@ -18,6 +29,23 @@ uart_tx #(
     .tx_valid(tx_valid),
     .tx_ready(tx_ready),
     .txd(txd)
+);
+
+uart_rx #(
+    .CLK_FREQ(CLK_FREQ),
+    .UART_BAUD(UART_BAUD),
+    .RX_FIFO_DEPTH(UART_RX_FIFO_DEPTH)
+) u_uart_rx (
+    .clk(clk),
+    .rst_n(rst_n),
+    .rxd(rxd),
+    .rx_data(rx_data),
+    .rx_valid(rx_valid),
+    .rx_ready(rx_ready),
+    .clear_overrun(clear_overrun),
+    .clear_frame_err(clear_frame_err),
+    .rx_overrun(rx_overrun),
+    .rx_frame_err(rx_frame_err)
 );
 
 endmodule
@@ -103,5 +131,227 @@ always @(posedge clk or negedge rst_n) begin
 end
 
 
+
+endmodule
+
+module uart_rx #(
+    parameter integer CLK_FREQ = 27_000_000,
+    parameter integer UART_BAUD = 115200,
+    parameter integer RX_FIFO_DEPTH = 16   // must be >=1, preferably power-of-two
+)(
+    input clk,
+    input rst_n,
+    input rxd,
+    output [7:0] rx_data,
+    output rx_valid,
+    input rx_ready,
+    input clear_overrun,
+    input clear_frame_err,
+    output reg rx_overrun,
+    output reg rx_frame_err
+);
+
+localparam integer BAUD_TICKS = (CLK_FREQ + (UART_BAUD/2)) / UART_BAUD;
+localparam integer BAUD_TICKS_SAFE = (BAUD_TICKS > 0) ? BAUD_TICKS : 1;
+localparam integer HALF_BAUD_TICKS = (BAUD_TICKS_SAFE > 1) ? (BAUD_TICKS_SAFE >> 1) : 1;
+
+function integer clog2;
+    input integer value;
+    integer i;
+    begin
+        clog2 = 0;
+        for (i = value - 1; i > 0; i = i >> 1)
+            clog2 = clog2 + 1;
+    end
+endfunction
+
+localparam [1:0] STATE_IDLE  = 2'd0;
+localparam [1:0] STATE_START = 2'd1;
+localparam [1:0] STATE_DATA  = 2'd2;
+localparam [1:0] STATE_STOP  = 2'd3;
+localparam integer RX_FIFO_ADDR_WIDTH = (RX_FIFO_DEPTH <= 1) ? 1 : clog2(RX_FIFO_DEPTH);
+
+reg [1:0] state;
+reg [15:0] baud_cnt;
+reg [3:0] bit_index;
+reg [7:0] rx_shift;
+reg rxd_meta;
+reg rxd_sync;
+reg store_char;
+reg frame_err_pulse;
+
+reg [7:0] fifo_mem [0:RX_FIFO_DEPTH-1];
+reg [RX_FIFO_ADDR_WIDTH-1:0] rd_ptr;
+reg [RX_FIFO_ADDR_WIDTH-1:0] wr_ptr;
+reg [RX_FIFO_ADDR_WIDTH:0] fifo_count;
+reg [7:0] rx_data_reg;
+reg rx_valid_reg;
+reg pop_pending;
+
+wire fifo_full  = (fifo_count == RX_FIFO_DEPTH);
+wire push_req   = store_char;
+wire pop_req    = rx_ready && rx_valid_reg;
+wire push_fifo  = push_req && !fifo_full;
+wire fifo_overflow_attempt = push_req && fifo_full;
+wire pop_fifo   = pop_pending;
+
+function [RX_FIFO_ADDR_WIDTH-1:0] ptr_inc;
+    input [RX_FIFO_ADDR_WIDTH-1:0] ptr;
+    begin
+        if (ptr == RX_FIFO_DEPTH-1)
+            ptr_inc = {RX_FIFO_ADDR_WIDTH{1'b0}};
+        else
+            ptr_inc = ptr + 1'b1;
+    end
+endfunction
+
+wire [RX_FIFO_ADDR_WIDTH-1:0] rd_ptr_next = ptr_inc(rd_ptr);
+wire [RX_FIFO_ADDR_WIDTH-1:0] wr_ptr_next = ptr_inc(wr_ptr);
+
+wire [RX_FIFO_ADDR_WIDTH:0] fifo_count_inc = fifo_count + 1'b1;
+wire [RX_FIFO_ADDR_WIDTH:0] fifo_count_dec = fifo_count - 1'b1;
+reg  [RX_FIFO_ADDR_WIDTH:0] fifo_count_next;
+
+assign rx_data = rx_data_reg;
+assign rx_valid = rx_valid_reg;
+
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        pop_pending <= 1'b0;
+    else if (pop_pending)
+        pop_pending <= 1'b0;
+    else if (pop_req)
+        pop_pending <= 1'b1;
+end
+
+always @(*) begin
+    case ({push_fifo, pop_fifo})
+        2'b10: fifo_count_next = fifo_count_inc;
+        2'b01: fifo_count_next = fifo_count_dec;
+        default: fifo_count_next = fifo_count;
+    endcase
+end
+
+// Synchronize RXD to clk domain
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        rxd_meta <= 1'b1;
+        rxd_sync <= 1'b1;
+    end else begin
+        rxd_meta <= rxd;
+        rxd_sync <= rxd_meta;
+    end
+end
+
+// UART RX state machine
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        state <= STATE_IDLE;
+        baud_cnt <= 16'd0;
+        bit_index <= 4'd0;
+        rx_shift <= 8'd0;
+        store_char <= 1'b0;
+        frame_err_pulse <= 1'b0;
+    end else begin
+        store_char <= 1'b0;
+        frame_err_pulse <= 1'b0;
+
+        case (state)
+            STATE_IDLE: begin
+                baud_cnt <= 16'd0;
+                bit_index <= 4'd0;
+                if (!rxd_sync)
+                    state <= STATE_START;
+            end
+
+            STATE_START: begin
+                if (baud_cnt >= HALF_BAUD_TICKS) begin
+                    baud_cnt <= 16'd0;
+                    if (!rxd_sync)
+                        state <= STATE_DATA;
+                    else
+                        state <= STATE_IDLE;
+                end else
+                    baud_cnt <= baud_cnt + 16'd1;
+            end
+
+            STATE_DATA: begin
+                if (baud_cnt >= (BAUD_TICKS_SAFE - 1)) begin
+                    baud_cnt <= 16'd0;
+                    rx_shift[bit_index] <= rxd_sync;
+                    if (bit_index == 4'd7) begin
+                        bit_index <= 4'd0;
+                        state <= STATE_STOP;
+                    end else
+                        bit_index <= bit_index + 4'd1;
+                end else
+                    baud_cnt <= baud_cnt + 16'd1;
+            end
+
+            STATE_STOP: begin
+                if (baud_cnt >= (BAUD_TICKS_SAFE - 1)) begin
+                    baud_cnt <= 16'd0;
+                    if (rxd_sync) begin
+                        store_char <= 1'b1;
+                    end else begin
+                        frame_err_pulse <= 1'b1;
+                    end
+                    state <= STATE_IDLE;
+                end else
+                    baud_cnt <= baud_cnt + 16'd1;
+            end
+
+            default: begin
+                state <= STATE_IDLE;
+            end
+        endcase
+    end
+end
+
+// RX FIFO and output register
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        rd_ptr <= {RX_FIFO_ADDR_WIDTH{1'b0}};
+        wr_ptr <= {RX_FIFO_ADDR_WIDTH{1'b0}};
+        fifo_count <= {RX_FIFO_ADDR_WIDTH+1{1'b0}};
+        rx_data_reg <= 8'd0;
+        rx_valid_reg <= 1'b0;
+        rx_overrun <= 1'b0;
+        rx_frame_err <= 1'b0;
+    end else begin
+        if (clear_overrun)
+            rx_overrun <= 1'b0;
+        else if (fifo_overflow_attempt)
+            rx_overrun <= 1'b1;
+
+        if (clear_frame_err)
+            rx_frame_err <= 1'b0;
+        else if (frame_err_pulse)
+            rx_frame_err <= 1'b1;
+
+        if (push_fifo) begin
+            fifo_mem[wr_ptr] <= rx_shift;
+            wr_ptr <= wr_ptr_next;
+        end
+
+        if (pop_fifo)
+            rd_ptr <= rd_ptr_next;
+
+        fifo_count <= fifo_count_next;
+        rx_valid_reg <= (fifo_count_next != 0);
+
+        if (pop_fifo) begin
+            if (fifo_count > 1) begin
+                rx_data_reg <= fifo_mem[rd_ptr_next];
+            end else if ((fifo_count == 1) && push_fifo) begin
+                rx_data_reg <= rx_shift;
+            end else begin
+                rx_data_reg <= 8'd0;
+            end
+        end else if (!rx_valid_reg && push_fifo && !pop_fifo) begin
+            rx_data_reg <= rx_shift;
+        end
+    end
+end
 
 endmodule

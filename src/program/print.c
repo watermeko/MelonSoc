@@ -1,4 +1,7 @@
 #include <stdarg.h>
+#include "uart.h"
+
+void print_hex_digits(unsigned int val, int nbdigits);
 
 void print_string(const char* s) {
    for(const char* p = s; *p; ++p) {
@@ -62,15 +65,27 @@ int printf(const char *fmt,...)
     return 0;
 }
 
-// 如果 putchar 是在汇编中实现的，并且在此裸机上下文中不是由标准头文件提供的，则声明它
-extern int putchar(int c);
-
 int main() {
+    uart_init();
+
     // 调用您的打印函数进行测试
     printf("Hello from C! Value: %d, Hex: %x\n", 123, 0xABC);
     printf("Test mult:%d * %d = %d\n", 7, 6, 7*6);
     printf("Test div:%d / %d = %d\n", 20, 3, 20/3);
     puts("This is a test string.\n");
+
+    printf("UART RX demo: waiting for a character...\n");
+    int rx_char = uart_getc_blocking();
+    printf("UART RX demo captured: %c (0x%x)\n", rx_char, rx_char);
+    printf("Echoing back everything you type.\n");
+
+    while (1) {
+        int ch = uart_getc_blocking();
+        if (ch == '\r')
+            putchar('\n');
+        putchar(ch);
+    }
+
     // 程序将在此处返回到 program.s 中的 _halt 标签
     return 0;
 }
