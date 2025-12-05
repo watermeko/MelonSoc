@@ -17,7 +17,7 @@
 
 _start:
     li sp, RAM_BASE_ADDR        
-    la gp, __global_pointer$    
+    la gp, IO_BASE_ADDR    
     call main                   
 
 _halt:
@@ -28,7 +28,7 @@ _halt:
 wait_:
     li t0, 1
     slli t0, t0, wait_bit
-wait_L0_:
+
     addi t0, t0, -1
     bnez t0, wait_L0_
     ret
