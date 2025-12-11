@@ -20,7 +20,7 @@ SIM_LIB = $(SIM_DIR)/prim_sim.v
 
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
-_C_SOURCES = program/print.c program/uart.c program/gpio.c
+_C_SOURCES = program/print.c program/uart.c program/gpio.c program/raystones.c
 LINKER_SCRIPT = program/linker_pipeline.ld      
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
@@ -82,7 +82,7 @@ OBJS = $(_C_OBJS) $(_S_OBJS)
 # 将目标文件链接到最终 ELF 可执行文件的规则
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "Linking object files to $@"
-	$(CC) $(CFLAGS_COMMON) $(LDFLAGS) $(OBJS) -o $@
+	$(CC) $(CFLAGS_COMMON) $(LDFLAGS) $(OBJS) -lgcc -o $@
 
 # 将 C 源文件编译为目标文件的规则
 $(BUILD_DIR)/%.o: program/%.c | dirs

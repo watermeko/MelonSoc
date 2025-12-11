@@ -15,6 +15,27 @@ module cpu(
     output [3:0] data_wmask
 );
 
+reg [63:0] csr_cycle;
+reg [63:0] csr_instret;
+
+always @(posedge clk or negedge rst_n) begin
+  if (!rst_n) begin
+    csr_cycle <= 0;
+    csr_instret <= 0;
+  end else begin
+    csr_cycle <= csr_cycle + 1;
+    if (state == WAIT_INSTR) begin
+      csr_instret <= csr_instret + 1;
+    end
+  end
+end
+
+wire [31:0] CSR_data =
+      ( instr[27] & instr[21]) ? csr_instret[63:32]:
+      (!instr[27] & instr[21]) ? csr_instret[31:0] :
+            instr[27]          ? csr_cycle[63:32]  :
+                                csr_cycle[31:0]   ;
+
 reg [31:0] PC=0;
 reg [31:0] instr;
 
@@ -28,6 +49,8 @@ wire isLUI   = (instr[6:0] == 7'b0110111); // LUI
 wire isLoad  = (instr[6:0] == 7'b0000011); // LOAD
 wire isStore = (instr[6:0] == 7'b0100011); // STORE
 wire isSYSTEM = (instr[6:0] == 7'b1110011); // SYSTEM
+wire isEBREAK     = isSYSTEM & (funct3 == 3'b000);
+wire isCSRRS      = isSYSTEM & (funct3 == 3'b010);
 wire isMex = isALUreg && funct7 == 7'b0000001; // M extension
 wire isMul = isMex && funct3[2] == 1'b0; // mul
 wire isDiv = isMex && funct3[2] == 1'b1; // div
@@ -63,7 +86,7 @@ localparam WAIT_COMPUTE = 6;  // 统一的计算等待状态
 
 // 定义各种计算的延迟周期
 localparam MUL_LATENCY = 2;   // 乘法需要等待2个周期
-localparam DIV_LATENCY = 3;   // 除法需要等待3个周期
+localparam DIV_LATENCY = 5;   // 除法需要等待3个周期
 // localparam FPU_LATENCY = 4; // 未来可能添加的浮点运算
 reg [2:0] compute_wait_counter; // 计算等待计数器
 
@@ -100,7 +123,7 @@ always @(posedge clk or negedge rst_n) begin
         state <= EXECUTE;
       end
       EXECUTE: begin
-        if(!isSYSTEM) begin
+        if(!isEBREAK) begin
           PC <= nextPC;
         end
         if (isMex) begin
@@ -171,8 +194,11 @@ Gowin_MULT u_gowin_mult(
 wire [31:0] unsigned_quotient;
 wire [31:0] unsigned_remainder;
 // 使用锁存的操作数作为除法器输入
-wire [31:0] div_dividend = div_operand1[31] ? -div_operand1 : div_operand1;
-wire [31:0] div_divisor = div_operand2[31] ? -div_operand2 : div_operand2;
+wire isUnsignedDivOp = isMex && (funct3 == 3'b101 || funct3 == 3'b111);
+wire [31:0] div_dividend = isUnsignedDivOp ? div_operand1 :
+                           (div_operand1[31] ? -div_operand1 : div_operand1);
+wire [31:0] div_divisor = isUnsignedDivOp ? div_operand2 :
+                          (div_operand2[31] ? -div_operand2 : div_operand2);
 Integer_Division_Top u_interger_division_top(
   .clk(clk),
   .rstn(rst_n),
@@ -272,8 +298,9 @@ assign writeBackData = isALUreg ? aluOut :
                         isLUI    ? Uimm :
                         isAUIPC  ? PCplusImm:
                         isLoad   ? LOAD_data :
+                        isCSRRS ? CSR_data :
                         0;
-assign writeBackEn = (state == EXECUTE&&((isALUreg&&!isMex)||isALUimm||isJAL||isJALR||isLUI||isAUIPC)) |
+assign writeBackEn = (state == EXECUTE&&((isALUreg&&!isMex)||isALUimm||isJAL||isJALR||isLUI||isAUIPC||isCSRRS)) |
                      (state == WAIT_COMPUTE && compute_wait_counter == 1) |
                      (state == WAIT_DATA && isLoad); 
 

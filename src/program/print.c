@@ -2,6 +2,8 @@
 #include "uart.h"
 #include "gpio.h"
 
+void raystones_run(void);
+
 void print_hex_digits(unsigned int val, int nbdigits);
 
 void print_string(const char* s) {
@@ -71,6 +73,7 @@ static void shell_help(void) {
     puts("  help               - show this help");
     puts("  led <6-bit-bin>    - set LEDs, e.g. led 101010");
     puts("  print <text>       - print text");
+    puts("  raystones          - run the raystones benchmark");
 }
 
 static void shell_set_leds(const char *arg) {
@@ -110,6 +113,14 @@ static void shell_print_text(const char *arg) {
         return;
     }
     puts(arg);
+}
+
+static void shell_run_raystones(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: raystones");
+        return;
+    }
+    raystones_run();
 }
 
 static int str_equals(const char *a, const char *b) {
@@ -186,6 +197,8 @@ int main() {
             shell_set_leds(arg);
         } else if (str_equals(cmd, "print")) {
             shell_print_text(arg);
+        } else if (str_equals(cmd, "raystones")) {
+            shell_run_raystones(arg);
         } else {
             puts("Unknown command. Type 'help'.");
         }
