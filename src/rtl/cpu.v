@@ -51,9 +51,6 @@ wire isStore = (instr[6:0] == 7'b0100011); // STORE
 wire isSYSTEM = (instr[6:0] == 7'b1110011); // SYSTEM
 wire isEBREAK     = isSYSTEM & (funct3 == 3'b000);
 wire isCSRRS      = isSYSTEM & (funct3 == 3'b010);
-wire isMex = isALUreg && funct7 == 7'b0000001; // M extension
-wire isMul = isMex && funct3[2] == 1'b0; // mul
-wire isDiv = isMex && funct3[2] == 1'b1; // div
 // The 5 immediate formats
 wire [31:0] Uimm = {instr[31], instr[30:12], {12{1'b0}}};
 wire [31:0] Iimm = {{21{instr[31]}}, instr[30:20]};
@@ -69,9 +66,6 @@ wire [6:0] funct7 = instr[31:25];
 reg [31:0] reg_bank [0:31];
 reg [31:0] rs1;
 reg [31:0] rs2;
-// 锁存除法器的输入，避免在等待期间被覆盖
-reg [31:0] div_operand1;
-reg [31:0] div_operand2;
 wire [31:0] writeBackData;
 wire        writeBackEn;
 
@@ -82,14 +76,6 @@ localparam EXECUTE = 2;
 localparam LOAD = 3;
 localparam WAIT_DATA = 4;
 localparam STORE = 5;
-localparam WAIT_COMPUTE = 6;  // 统一的计算等待状态
-
-// 定义各种计算的延迟周期
-localparam MUL_LATENCY = 2;   // 乘法需要等待2个周期
-localparam DIV_LATENCY = 5;   // 除法需要等待3个周期
-// localparam FPU_LATENCY = 4; // 未来可能添加的浮点运算
-reg [2:0] compute_wait_counter; // 计算等待计数器
-
 reg [3:0] state = FETCH_INSTR;
 
 always @(posedge clk or negedge rst_n) begin
@@ -102,7 +88,6 @@ always @(posedge clk or negedge rst_n) begin
   if (!rst_n) begin
     state <= FETCH_INSTR;
     PC <= 0;
-    compute_wait_counter <= 0;
   end else begin
     if(writeBackEn && rdId != 0) begin
       reg_bank[rdId] <= writeBackData;
@@ -126,19 +111,8 @@ always @(posedge clk or negedge rst_n) begin
         if(!isEBREAK) begin
           PC <= nextPC;
         end
-        if (isMex) begin
-          div_operand1 <= rs1;
-          div_operand2 <= rs2;
-          // 根据指令类型设置等待周期
-          if (isMul) begin
-            compute_wait_counter <= MUL_LATENCY;
-          end else if (isDiv) begin
-            compute_wait_counter <= DIV_LATENCY;
-          end
-        end
         state <= isLoad ? LOAD :
                  isStore ? STORE :
-                 isMex ? WAIT_COMPUTE :
                  FETCH_INSTR;
       end
       LOAD: begin
@@ -149,13 +123,6 @@ always @(posedge clk or negedge rst_n) begin
       end
       STORE: begin
         state <= FETCH_INSTR;
-      end
-      WAIT_COMPUTE: begin
-        if (compute_wait_counter == 1) begin
-          state <= FETCH_INSTR;
-        end else begin
-          compute_wait_counter <= compute_wait_counter - 1;
-        end
       end
     endcase
   end
@@ -181,83 +148,8 @@ wire EQ = (aluMinus[31:0] == 0);
 wire LTU = aluMinus[32];
 wire LT = (aluIn1[31] ^ aluIn2[31]) ? aluIn1[31] : aluMinus[32];
 
-wire [63:0] signed_mul;
-Gowin_MULT u_gowin_mult(
-  .a(aluIn1),
-  .b(aluIn2),
-  .ce(1'b1),
-  .clk(clk),
-  .reset(!rst_n),
-  .dout(signed_mul)
-);
-
-wire [31:0] unsigned_quotient;
-wire [31:0] unsigned_remainder;
-// 使用锁存的操作数作为除法器输入
-wire isUnsignedDivOp = isMex && (funct3 == 3'b101 || funct3 == 3'b111);
-wire [31:0] div_dividend = isUnsignedDivOp ? div_operand1 :
-                           (div_operand1[31] ? -div_operand1 : div_operand1);
-wire [31:0] div_divisor = isUnsignedDivOp ? div_operand2 :
-                          (div_operand2[31] ? -div_operand2 : div_operand2);
-Integer_Division_Top u_interger_division_top(
-  .clk(clk),
-  .rstn(rst_n),
-  .dividend(div_dividend),
-  .divisor(div_divisor),
-  .remainder(unsigned_remainder),
-  .quotient(unsigned_quotient)
-);
-
 // 没有使用节省移位器的方法
 always @(*) begin
-  if (isALUreg && funct7 == 7'b0000001) begin
-    case (funct3)
-      3'b000: aluOut = signed_mul[31:0]; // mul
-      3'b001: aluOut = signed_mul[63:32]; // mulh
-      3'b010: aluOut = signed_mul[63:32] + (aluIn2[31]?aluIn1:32'b0); // mulhsu
-      3'b011: aluOut = signed_mul[63:32] + (aluIn2[31]?aluIn1:32'b0) + (aluIn1[31]?aluIn2:32'b0); // mulhu
-      3'b100: begin // DIV - 使用锁存的操作数
-        if (div_operand2 == 32'b0) begin
-          aluOut = 32'hFFFFFFFF;
-        end else if (div_operand1 == 32'h80000000 && div_operand2 == 32'hFFFFFFFF) begin // MinInt / -1
-          aluOut = 32'h80000000;
-        end else begin
-          if (div_operand1[31] ^ div_operand2[31]) begin
-            aluOut = -unsigned_quotient;
-          end else begin
-            aluOut = unsigned_quotient;
-          end
-        end
-      end
-      3'b101: begin // DIVU - 使用锁存的操作数
-        if (div_operand2 == 32'b0) begin
-          aluOut = 32'hFFFFFFFF;
-        end else begin
-          aluOut = unsigned_quotient;
-        end
-      end
-      3'b110: begin // REM - 使用锁存的操作数
-        if (div_operand2 == 32'b0) begin
-          aluOut = div_operand1;
-        end else if (div_operand1 == 32'h80000000 && div_operand2 == 32'hFFFFFFFF) begin // MinInt % -1
-          aluOut = 32'b0;
-        end else begin
-          if (div_operand1[31] && unsigned_remainder != 32'b0) begin
-            aluOut = -unsigned_remainder;
-          end else begin
-            aluOut = unsigned_remainder;
-          end
-        end
-      end
-      3'b111: begin // REMU - 使用锁存的操作数
-        if (div_operand2 == 32'b0) begin
-          aluOut = div_operand1;
-        end else begin
-          aluOut = unsigned_remainder;
-        end
-      end
-    endcase
-  end else begin
   case(funct3)
     // ? problem
     3'b000: aluOut = (funct7[5] & instr[5]) ? aluMinus : aluPlus;
@@ -269,7 +161,6 @@ always @(*) begin
     3'b110: aluOut = (aluIn1 | aluIn2);
     3'b111: aluOut = (aluIn1 & aluIn2);	
   endcase
-  end
 end
 
 
@@ -300,8 +191,7 @@ assign writeBackData = isALUreg ? aluOut :
                         isLoad   ? LOAD_data :
                         isCSRRS ? CSR_data :
                         0;
-assign writeBackEn = (state == EXECUTE&&((isALUreg&&!isMex)||isALUimm||isJAL||isJALR||isLUI||isAUIPC||isCSRRS)) |
-                     (state == WAIT_COMPUTE && compute_wait_counter == 1) |
+assign writeBackEn = (state == EXECUTE&&(isALUreg||isALUimm||isJAL||isJALR||isLUI||isAUIPC||isCSRRS)) |
                      (state == WAIT_DATA && isLoad); 
 
 wire [31:0] nextPC = (isBranch&&takeBranch) ? PCplusImm :

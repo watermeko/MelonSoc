@@ -50,8 +50,8 @@ initial begin
     $readmemh("build/PROGROM.hex", PROGROM);
     $readmemh("build/DATARAM.hex", DATARAM);
     `else
-    $readmemh("../../build/PROGROM.hex", PROGROM);
-    $readmemh("../../build/DATARAM.hex", DATARAM);
+    $readmemh("../build/PROGROM.hex", PROGROM);
+    $readmemh("../build/DATARAM.hex", DATARAM);
     `endif 
 
     `ifdef BENCH

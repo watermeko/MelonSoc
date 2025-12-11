@@ -28,8 +28,23 @@ _halt:
 wait_:
     li t0, 1
     slli t0, t0, wait_bit
-
+wait_L0_:
     addi t0, t0, -1
     bnez t0, wait_L0_
     ret
 
+rdcycle:
+.L0:  
+   rdcycleh a1
+   rdcycle a0
+   rdcycleh t0
+   bne a1,t0,.L0
+   ret
+
+rdinstret:
+.L1:  
+   rdinstreth a1
+   rdinstret a0
+   rdinstreth t0
+   bne a1,t0,.L1
+   ret

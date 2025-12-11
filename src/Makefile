@@ -10,10 +10,7 @@ SIM_OUTPUT = build/a.out
 
 RTL_DIR = rtl
 SIM_DIR = sim
-IP_DIR = ip
-
 RTL_SOURCES = $(addprefix $(RTL_DIR)/, top.v mem.v cpu.v uart.v)
-IP_SOURCES = $(IP_DIR)/gowin_mult/gowin_mult.v $(IP_DIR)/integer_division/integer_division.vo
 SIM_BENCH = $(SIM_DIR)/bench_iverilog.v
 SIM_CPP = $(SIM_DIR)/bench.cpp
 SIM_LIB = $(SIM_DIR)/prim_sim.v
@@ -25,7 +22,7 @@ LINKER_SCRIPT = program/linker_pipeline.ld
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
 
-VERILOG_SOURCES = $(RTL_SOURCES) $(IP_SOURCES)
+VERILOG_SOURCES = $(RTL_SOURCES)
 BUILD_DIR = build
 
 TARGET_ELF = $(BUILD_DIR)/$(TARGET_NAME).elf
@@ -43,7 +40,7 @@ else
     BIN2HEX_EXECUTABLE = $(BUILD_DIR)/$(BIN2HEX_UTIL_NAME)
 endif
 
-ARCH_FLAGS = -march=rv32im -mabi=ilp32
+ARCH_FLAGS = -march=rv32i -mabi=ilp32
 CFLAGS_COMMON = $(ARCH_FLAGS) -nostdlib -nostartfiles
 CFLAGS_S = $(CFLAGS_COMMON)
 CFLAGS_C = $(CFLAGS_COMMON) -O2 -Wall -Iprogram # 取消注释并为 C 文件添加编译标志，-Iprogram 用于 program/ 目录下的头文件
