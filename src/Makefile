@@ -41,11 +41,14 @@ else
 endif
 
 ARCH_FLAGS = -march=rv32i -mabi=ilp32
-CFLAGS_COMMON = $(ARCH_FLAGS) -nostdlib -nostartfiles
+PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
+PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
+CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)
 CFLAGS_S = $(CFLAGS_COMMON)
-CFLAGS_C = $(CFLAGS_COMMON) -O2 -Wall -Iprogram # 取消注释并为 C 文件添加编译标志，-Iprogram 用于 program/ 目录下的头文件
+CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions -ffunction-sections -fdata-sections -Iprogram # 缩小代码尺寸，-Iprogram 用于 program/ 目录下的头文件
 
-LDFLAGS = -Wl,-T$(LINKER_SCRIPT) 
+LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
+LIBS = -lc -lm -lgcc
 
 IVERILOG_FLAGS = -DBENCH -DFREQ_DIV=0
 
@@ -79,7 +82,7 @@ OBJS = $(_C_OBJS) $(_S_OBJS)
 # 将目标文件链接到最终 ELF 可执行文件的规则
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "Linking object files to $@"
-	$(CC) $(CFLAGS_COMMON) $(LDFLAGS) $(OBJS) -lgcc -o $@
+	$(CC) $(ARCH_FLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
 
 # 将 C 源文件编译为目标文件的规则
 $(BUILD_DIR)/%.o: program/%.c | dirs

@@ -5,3 +5,6 @@ impl/
 !impl/*.json
 .claude/
 CLAUDE.md
+
+melon-riscv.gprj.user
+docs/

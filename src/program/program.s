@@ -1,5 +1,8 @@
-.section .text.init 
+.section .text 
 .global _start      
+
+.global rdcycle
+.global rdinstret
 
 .equ wait_bit, 1
 
@@ -17,7 +20,19 @@
 
 _start:
     li sp, RAM_BASE_ADDR        
-    la gp, IO_BASE_ADDR    
+    .option push
+    .option norelax
+    la gp, __global_pointer$    
+    .option pop
+    la t0, __bss_start
+    la t1, __bss_end
+    li t2, 0
+1:
+    beq t0, t1, 2f
+    sw t2, 0(t0)
+    addi t0, t0, 4
+    bltu t0, t1, 1b
+2:
     call main                   
 
 _halt:

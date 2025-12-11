@@ -4,7 +4,7 @@
 /* Original tinyraytracer: https://github.com/ssloy/tinyraytracer  */
 
 #include <stdint.h>
-
+// #include <math.h>
 #include "gpio.h"
 
 int printf(const char *fmt, ...);
