@@ -1,0 +1,141 @@
+`include "lib/soc_pkg.sv"
+`include "lib/bus_if.sv"
+module SOC (
+  input  logic clk,        // system clock
+  input  logic rst_n,      // reset button
+  output logic [5:0] leds, // system LEDs
+  input  logic rxd,        // UART receive
+  output logic txd         // UART transmit
+);
+  import soc_pkg::*;
+
+  imem_if       instr_bus();
+  simple_bus_if cpu_data_bus();
+  simple_bus_if ram_bus();
+  simple_bus_if mmio_bus();
+
+  // Per-peripheral MMIO buses (avoid multi-driver on rdata).
+  simple_bus_if mmio_gpio_bus();
+  simple_bus_if mmio_uart_bus();
+
+  cpu u_cpu (
+    .clk(clk),
+    .rst_n(rst_n),
+    .instr(instr_bus),
+    .data(cpu_data_bus)
+  );
+
+  mem u_mem (
+    .clk(clk),
+    .instr(instr_bus),
+    .data(ram_bus)
+  );
+
+  // ------------- Data-bus split: RAM vs MMIO -------------
+  logic data_req_any;
+  logic data_is_mmio;
+  logic data_is_mmio_q;
+
+  always_comb begin
+    data_req_any = cpu_data_bus.ren || cpu_data_bus.wen;
+    data_is_mmio = is_mmio_region(cpu_data_bus.addr);
+  end
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      data_is_mmio_q <= 1'b0;
+    end else if (data_req_any) begin
+      data_is_mmio_q <= data_is_mmio;
+    end
+  end
+
+  // Drive RAM and MMIO buses from the CPU master bus.
+  always_comb begin
+    // Defaults
+    ram_bus.addr  = cpu_data_bus.addr;
+    ram_bus.ren   = cpu_data_bus.ren & ~data_is_mmio;
+    ram_bus.wen   = cpu_data_bus.wen & ~data_is_mmio;
+    ram_bus.wdata = cpu_data_bus.wdata;
+    ram_bus.wstrb = cpu_data_bus.wstrb & {4{~data_is_mmio}};
+
+    mmio_bus.addr  = cpu_data_bus.addr;
+    mmio_bus.ren   = cpu_data_bus.ren & data_is_mmio;
+    mmio_bus.wen   = cpu_data_bus.wen & data_is_mmio;
+    mmio_bus.wdata = cpu_data_bus.wdata;
+    mmio_bus.wstrb = cpu_data_bus.wstrb & {4{data_is_mmio}};
+
+    // Readback to CPU: select is latched on request.
+    cpu_data_bus.rdata = data_is_mmio_q ? mmio_bus.rdata : ram_bus.rdata;
+  end
+
+  // ------------- MMIO decode and registered readback -------------
+  logic sel_leds;
+  logic sel_uart;
+
+  always_comb begin
+    sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
+    sel_uart = (align_word(mmio_bus.addr) == IO_UART_DAT_ADDR) ||
+               (align_word(mmio_bus.addr) == IO_UART_CTRL_ADDR);
+
+    mmio_gpio_bus.addr  = mmio_bus.addr;
+    mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
+    mmio_gpio_bus.wen   = mmio_bus.wen & sel_leds;
+    mmio_gpio_bus.wdata = mmio_bus.wdata;
+    mmio_gpio_bus.wstrb = mmio_bus.wstrb;
+
+    mmio_uart_bus.addr  = mmio_bus.addr;
+    mmio_uart_bus.ren   = mmio_bus.ren & sel_uart;
+    mmio_uart_bus.wen   = mmio_bus.wen & sel_uart;
+    mmio_uart_bus.wdata = mmio_bus.wdata;
+    mmio_uart_bus.wstrb = mmio_bus.wstrb;
+  end
+
+  gpio_mmio #(
+    .LEDS_W(6)
+  ) u_gpio_mmio (
+    .clk(clk),
+    .rst_n(rst_n),
+    .bus(mmio_gpio_bus),
+    .leds(leds)
+  );
+
+  uart_mmio u_uart_mmio (
+    .clk(clk),
+    .rst_n(rst_n),
+    .rxd(rxd),
+    .txd(txd),
+    .bus(mmio_uart_bus)
+  );
+
+  logic [31:0] mmio_rdata_comb;
+  logic [31:0] mmio_rdata_q;
+
+  always_comb begin
+    unique case (1'b1)
+      sel_leds: mmio_rdata_comb = mmio_gpio_bus.rdata;
+      sel_uart: mmio_rdata_comb = mmio_uart_bus.rdata;
+      default:  mmio_rdata_comb = 32'b0;
+    endcase
+  end
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      mmio_rdata_q <= 32'b0;
+    end else if (mmio_bus.ren) begin
+      mmio_rdata_q <= mmio_rdata_comb;
+    end
+  end
+
+  always_comb begin
+    mmio_bus.rdata = mmio_rdata_q;
+  end
+
+  `ifdef BENCH
+    // Convenient UART output tap for simulation.
+    always_ff @(posedge clk) begin
+      if (mmio_bus.wen && (align_word(mmio_bus.addr) == IO_UART_DAT_ADDR)) begin
+        $write("%c", mmio_bus.wdata[7:0]);
+      end
+    end
+  `endif
+endmodule

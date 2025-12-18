@@ -3,17 +3,13 @@ CC = $(CROSS_COMPILE)gcc
 OBJCOPY = $(CROSS_COMPILE)objcopy
 
 HOST_CC = gcc
-
-IVERILOG = iverilog
-VVP = vvp
-SIM_OUTPUT = build/a.out 
+HOST_CXX ?= g++
 
 RTL_DIR = rtl
 SIM_DIR = sim
-RTL_SOURCES = $(addprefix $(RTL_DIR)/, top.v mem.v cpu.v uart.v)
-SIM_BENCH = $(SIM_DIR)/bench_iverilog.v
+RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv cpu.sv mem.sv gpio_mmio.sv uart_mmio.sv top.v)
 SIM_CPP = $(SIM_DIR)/bench.cpp
-SIM_LIB = $(SIM_DIR)/prim_sim.v
+SIM_CPP_ABS = $(abspath $(SIM_CPP))
 
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
@@ -24,6 +20,7 @@ BIN2HEX_C_SRC = program/bin_to_verilog_hex.c
 
 VERILOG_SOURCES = $(RTL_SOURCES)
 BUILD_DIR = build
+VLT_MDIR = $(BUILD_DIR)/obj_dir
 
 TARGET_ELF = $(BUILD_DIR)/$(TARGET_NAME).elf
 TARGET_BIN = $(BUILD_DIR)/$(TARGET_NAME).bin
@@ -49,8 +46,6 @@ CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-fu
 
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
-
-IVERILOG_FLAGS = -DBENCH -DFREQ_DIV=0
 
 .PHONY: all build clean dirs simulate simulate_verilator
 
@@ -139,25 +134,23 @@ load_flash:
 	openFPGALoader -c ft2232 -b tangprimer20k -f ../impl/pnr/melon-riscv.fs
 	@echo "Flash complete."
 
-simulate: build $(VERILOG_SOURCES)
-	@echo "Compiling Verilog sources for simulation..."
-	$(IVERILOG) $(IVERILOG_FLAGS) -o $(SIM_OUTPUT) $(VERILOG_SOURCES) $(SIM_BENCH) -l$(SIM_LIB)
-	@echo "Running simulation..."
-	$(VVP) $(SIM_OUTPUT)
-	@echo "Simulation finished."
-
-simulate_verilator: build $(VERILOG_SOURCES) $(SIM_CPP)
+simulate: build $(VERILOG_SOURCES) $(SIM_CPP)
 	@echo "Running Verilator to compile Verilog sources..."
-	verilator -DBENCH -Wno-fatal --top-module SOC -cc -exe $(SIM_CPP) $(VERILOG_SOURCES) $(SIM_LIB) --Mdir obj_dir --bbox-unsup
+	@mkdir -p $(VLT_MDIR)
+	verilator -sv -I$(RTL_DIR) -I$(RTL_DIR)/lib -DBENCH -Wno-fatal --top-module SOC -cc -exe $(SIM_CPP_ABS) $(VERILOG_SOURCES) --Mdir $(VLT_MDIR) --bbox-unsup
 	@echo "Building Verilator simulation executable..."
-	$(MAKE) -C obj_dir -f VSOC.mk
+	@command -v $(HOST_CXX) >/dev/null 2>&1 || (echo "Error: need a C++ compiler (set HOST_CXX=clang++ or install g++)"; exit 1)
+	@echo 'int main(){return 0;}' | $(HOST_CXX) -x c++ - -o /tmp/melonsoc_cxx_test >/dev/null 2>&1 || (echo "Error: $(HOST_CXX) cannot compile C++ (missing cc1plus/libstdc++?). Install g++/clang++ and rerun."; exit 1)
+	@rm -f /tmp/melonsoc_cxx_test
+	$(MAKE) -C $(VLT_MDIR) -f VSOC.mk CXX=$(HOST_CXX)
 	@echo "Running Verilator simulation..."
-	./obj_dir/VSOC
+	./$(VLT_MDIR)/VSOC
 	@echo "Verilator simulation finished."
+
+simulate_verilator: simulate
 
 clean:
 	@echo "Cleaning up generated files and directories..."
 	rm -rf $(BUILD_DIR) $(TARGET_NAME).elf $(TARGET_NAME).bin $(TARGET_NAME).hex .elf .bin .hex obj_dir
-	rm -f $(SIM_OUTPUT) 
 	@echo "Cleanup complete."
 
