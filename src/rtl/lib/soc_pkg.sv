@@ -35,8 +35,8 @@ package soc_pkg;
   localparam int unsigned UART_RX_FIFO_DEPTH   = 16;
 
   // ---------------- Memory configuration ----------------
-  localparam int unsigned PROGROM_WORDS        = 16384; // 64KB / 4
-  localparam int unsigned DATARAM_WORDS        = 16384; // 64KB / 4
+  localparam int unsigned PROGROM_WORDS        = 8192; // 32KB / 4
+  localparam int unsigned DATARAM_WORDS        = 8192; // 32KB / 4
 endpackage
 
 `endif

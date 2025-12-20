@@ -12,17 +12,15 @@ module mem #(
   localparam int unsigned PROGROM_AW = (PROGROM_WORDS <= 1) ? 1 : $clog2(PROGROM_WORDS);
   localparam int unsigned DATARAM_AW = (DATARAM_WORDS <= 1) ? 1 : $clog2(DATARAM_WORDS);
 
-  logic [31:0] PROGROM [0:PROGROM_WORDS-1];
-  logic [31:0] DATARAM [0:DATARAM_WORDS-1];
-
-  logic [PROGROM_AW-1:0] instr_word_addr;
-  logic [DATARAM_AW-1:0] data_word_addr;
+  // Force Gowin to map these arrays into block SRAM (BSRAM) rather than LUTs.
+  logic [31:0] PROGROM [0:PROGROM_WORDS-1]/*synthesis syn_ramstyle = "block_ram"*/;
+  logic [31:0] DATARAM [0:DATARAM_WORDS-1]/*synthesis syn_ramstyle = "block_ram"*/;
 
   // Address mapping: use the low bits as word index (keeps the existing linker map).
-  always_comb begin
-    instr_word_addr = instr.addr[PROGROM_AW+1:2];
-    data_word_addr  = data.addr[DATARAM_AW+1:2];
-  end
+  logic [PROGROM_AW-1:0] instr_word_addr;
+  logic [DATARAM_AW-1:0] data_word_addr;
+  assign instr_word_addr = instr.addr[PROGROM_AW+1:2];
+  assign data_word_addr  = data.addr[DATARAM_AW+1:2];
 
   // Instruction read (sync)
   always_ff @(posedge clk) begin
