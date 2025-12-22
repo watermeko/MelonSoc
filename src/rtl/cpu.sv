@@ -24,6 +24,17 @@ module cpu (
 
   logic halted;
 
+  // ---------------------- Division state machine ----------------------
+  logic [31:0] div_dividend;
+  logic [62:0] div_divisor;
+  logic [31:0] div_quotient;
+  logic [31:0] div_quotient_msk;
+  logic        div_sign;
+  logic        div_busy = 1'b0;
+  logic [31:0] div_result_q;  // Final quotient result
+  logic [31:0] div_result_r;  // Final remainder result
+  logic        div_result_valid = 1'b0;
+
   // ---------------------- IF stage ----------------------
   logic [31:0] pc_f;
 
@@ -48,6 +59,7 @@ module cpu (
 
   logic isALUreg_d, isALUimm_d, isBranch_d, isJALR_d, isJAL_d, isAUIPC_d, isLUI_d;
   logic isLoad_d, isStore_d, isSYSTEM_d, isEBREAK_d, isCSRRS_d;
+  logic isMUL_d, isDIV_d;
 
   logic uses_rs1_d, uses_rs2_d;
 
@@ -62,7 +74,7 @@ module cpu (
   assign funct7_d = instr_d[31:25];
 
   always_comb begin
-    isALUreg_d = id_valid && (opcode_d == 7'b0110011);
+    isALUreg_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d != 7'b0000001);
     isALUimm_d = id_valid && (opcode_d == 7'b0010011);
     isBranch_d = id_valid && (opcode_d == 7'b1100011);
     isJALR_d   = id_valid && (opcode_d == 7'b1100111);
@@ -73,12 +85,16 @@ module cpu (
     isStore_d  = id_valid && (opcode_d == 7'b0100011);
     isSYSTEM_d = id_valid && (opcode_d == 7'b1110011);
 
+    // M extension instructions
+    isMUL_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b0);
+    isDIV_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b1);
+
     isEBREAK_d = isSYSTEM_d && (funct3_d == 3'b000);
     isCSRRS_d  = isSYSTEM_d && (funct3_d == 3'b010);
 
     // Register usage (avoid false hazards on U/J types).
-    uses_rs1_d = isALUreg_d || isALUimm_d || isBranch_d || isJALR_d || isLoad_d || isStore_d;
-    uses_rs2_d = isALUreg_d || isBranch_d || isStore_d;
+    uses_rs1_d = isALUreg_d || isALUimm_d || isBranch_d || isJALR_d || isLoad_d || isStore_d || isMUL_d || isDIV_d;
+    uses_rs2_d = isALUreg_d || isBranch_d || isStore_d || isMUL_d || isDIV_d;
 
     Uimm_d = {instr_d[31], instr_d[30:12], 12'b0};
     Iimm_d = {{21{instr_d[31]}}, instr_d[30:20]};
@@ -111,6 +127,7 @@ module cpu (
   logic [31:0] id_ex_Uimm, id_ex_Iimm, id_ex_Simm, id_ex_Bimm, id_ex_Jimm;
   logic        id_ex_isALUreg, id_ex_isALUimm, id_ex_isBranch, id_ex_isJALR, id_ex_isJAL;
   logic        id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore, id_ex_isCSRRS, id_ex_isEBREAK;
+  logic        id_ex_isMUL, id_ex_isDIV;
 
   // ---------------------- EX stage (with forwarding) ----------------------
   logic [31:0] ex_rs1, ex_rs2;
@@ -166,13 +183,25 @@ module cpu (
 
   // ---------------------- Hazard detection ----------------------
   logic stall_load_use;
+  logic stall_div;
+  logic stall_any;
   always_comb begin
     stall_load_use = 1'b0;
+    stall_div = 1'b0;
+
+    // Load-use hazard
     if (id_valid && id_ex_valid && id_ex_isLoad && (id_ex_rd != 5'd0)) begin
       if ((uses_rs1_d && (id_ex_rd == rs1_d)) || (uses_rs2_d && (id_ex_rd == rs2_d))) begin
         stall_load_use = 1'b1;
       end
     end
+
+    // Division stall - stall when division is running OR when division instruction enters EX
+    if (div_busy || (id_ex_isDIV && id_ex_valid && !div_result_valid)) begin
+      stall_div = 1'b1;
+    end
+
+    stall_any = stall_load_use || stall_div;
   end
 
   // ---------------------- Forwarding selection ----------------------
@@ -208,16 +237,29 @@ module cpu (
                                              csr_cycle[31:0];
   end
 
+  // ---------------------- Division step logic ----------------------
+  wire div_step_do = (div_divisor <= {31'b0, div_dividend});
+
   // ---------------------- EX stage logic ----------------------
   always_comb begin
     logic [4:0] shamt;
     logic is_sub;
     logic mem_byteAccess, mem_halfwordAccess;
 
+    // Multiplication
+    logic [63:0] mul_result;
+    logic signed [63:0] mul_signed_result;
+    logic signed [63:0] mul_mixed_result;
+
     shamt            = 5'b0;
     is_sub           = 1'b0;
     mem_byteAccess     = 1'b0;
     mem_halfwordAccess = 1'b0;
+
+    // Initialize multiplication results to avoid latches
+    mul_result = 64'b0;
+    mul_signed_result = 64'b0;
+    mul_mixed_result = 64'b0;
 
     // Defaults
     ex_alu_in2   = 32'b0;
@@ -306,9 +348,28 @@ module cpu (
 
     // Writeback selection (loads get data in WB stage).
     if (id_ex_valid) begin
-      if (id_ex_isALUreg || id_ex_isALUimm) begin
+      if (id_ex_isMUL) begin
+        // Multiplication logic
+        unique case (id_ex_funct3)
+          3'b000: mul_result = $unsigned(ex_rs1) * $unsigned(ex_rs2); // MUL
+          3'b001: mul_signed_result = $signed(ex_rs1) * $signed(ex_rs2); // MULH
+          3'b010: mul_mixed_result = $signed(ex_rs1) * $signed({1'b0, ex_rs2}); // MULHSU
+          3'b011: mul_result = $unsigned(ex_rs1) * $unsigned(ex_rs2); // MULHU
+          default: mul_result = 64'b0;
+        endcase
+
+        ex_wb_en = 1'b1;
+        ex_wb_value = (id_ex_funct3 == 3'b000) ? mul_result[31:0] :
+                      (id_ex_funct3 == 3'b001) ? mul_signed_result[63:32] :
+                      (id_ex_funct3 == 3'b010) ? mul_mixed_result[63:32] :
+                                                 mul_result[63:32];
+      end else if (id_ex_isALUreg || id_ex_isALUimm) begin
         ex_wb_en    = 1'b1;
         ex_wb_value = ex_alu_out;
+      end else if (id_ex_isDIV && div_result_valid) begin
+        // Division result writeback
+        ex_wb_en = 1'b1;
+        ex_wb_value = id_ex_funct3[1] ? div_result_r : div_result_q;  // REM or DIV
       end else if (id_ex_isJAL || id_ex_isJALR) begin
         ex_wb_en    = 1'b1;
         ex_wb_value = ex_pc_plus4;
@@ -369,9 +430,9 @@ module cpu (
   always_comb begin
     // Keep instruction ROM access BRAM-friendly:
     // - Never feed ROM read-data back into ROM control/address combinationally.
-    // - During a load-use stall, hold the F2 stage (`instr.rdata` + `if_pc`) stable so it can
+    // - During a stall, hold the F2 stage (`instr.rdata` + `if_pc`) stable so it can
     //   be transferred into the ID register once the stall clears.
-    instr.addr = stall_load_use ? if_pc : pc_f;
+    instr.addr = stall_any ? if_pc : pc_f;
     instr.ren  = !halted;
 
     data.addr  = ex_mem_addr;
@@ -418,6 +479,8 @@ module cpu (
       id_ex_isStore  <= 1'b0;
       id_ex_isCSRRS  <= 1'b0;
       id_ex_isEBREAK <= 1'b0;
+      id_ex_isMUL    <= 1'b0;
+      id_ex_isDIV    <= 1'b0;
 
       ex_mem_valid <= 1'b0;
       ex_mem_rd    <= 5'b0;
@@ -437,6 +500,16 @@ module cpu (
       mem_wb_addr_low <= 2'b0;
       mem_wb_wb_en <= 1'b0;
       mem_wb_wb_value <= 32'b0;
+
+      div_dividend <= 32'b0;
+      div_divisor <= 63'b0;
+      div_quotient <= 32'b0;
+      div_quotient_msk <= 32'b0;
+      div_sign <= 1'b0;
+      div_busy <= 1'b0;
+      div_result_q <= 32'b0;
+      div_result_r <= 32'b0;
+      div_result_valid <= 1'b0;
 
       csr_cycle   <= 64'b0;
       csr_instret <= 64'b0;
@@ -462,7 +535,7 @@ module cpu (
       end
 
       // IF stage
-      if (!halted && !halt_now && !stall_load_use) begin
+      if (!halted && !halt_now && !stall_any) begin
         if_pc    <= pc_f;
         if_valid <= ex_redirect ? 1'b0 : 1'b1;
 
@@ -477,18 +550,18 @@ module cpu (
           id_valid <= 1'b0;
           id_pc    <= 32'b0;
           id_instr <= 32'h0000_0013; // NOP
-        end else if (!stall_load_use) begin
+        end else if (!stall_any) begin
           id_valid <= if_valid;
           id_pc    <= if_pc;
           id_instr <= instr.rdata;
         end
       end
 
-      // ID/EX update (bubble on stall/flush)
+      // ID/EX update (bubble on stall/flush, but don't bubble for division stall)
       if (!halted) begin
         if (halt_now || ex_redirect || stall_load_use) begin
           id_ex_valid <= 1'b0;
-        end else begin
+        end else if (!stall_div) begin
           id_ex_valid  <= id_valid;
           id_ex_pc     <= id_pc;
           id_ex_instr  <= id_instr;
@@ -515,6 +588,8 @@ module cpu (
           id_ex_isStore  <= isStore_d;
           id_ex_isCSRRS  <= isCSRRS_d;
           id_ex_isEBREAK <= isEBREAK_d;
+          id_ex_isMUL    <= isMUL_d;
+          id_ex_isDIV    <= isDIV_d;
         end
       end
 
@@ -541,6 +616,61 @@ module cpu (
         mem_wb_addr_low <= ex_mem_addr[1:0];
         mem_wb_wb_en <= ex_mem_wb_en;
         mem_wb_wb_value <= ex_mem_wb_value;
+      end
+
+      // Division state machine
+      if (!halted) begin
+        // Clear div_busy and div_result_valid on pipeline flush
+        if (ex_redirect || halt_now) begin
+          div_busy <= 1'b0;
+          div_result_valid <= 1'b0;
+        end else if (div_result_valid && (!id_ex_isDIV || !id_ex_valid)) begin
+          // Clear result valid when division instruction leaves EX stage
+          div_result_valid <= 1'b0;
+        end
+
+        if (!div_busy) begin
+          // Start new division if division instruction is in EX stage
+          if (id_ex_isDIV && id_ex_valid && !div_result_valid) begin
+            // Check for division by zero (RISC-V spec: DIV/DIVU by 0 = -1, REM/REMU by 0 = dividend)
+            if (ex_rs2 == 32'b0) begin
+              // Division by zero - return result immediately
+              div_result_q <= 32'hFFFFFFFF;  // -1 for DIV/DIVU
+              div_result_r <= ex_rs1;         // dividend for REM/REMU
+              div_result_valid <= 1'b1;
+              div_busy <= 1'b0;
+            end else begin
+              // Normal division
+              div_quotient_msk <= 1 << 31;
+              div_busy <= 1'b1;
+              div_dividend <= (~id_ex_funct3[0] & ex_rs1[31]) ? -$signed(ex_rs1) : ex_rs1;
+              div_divisor <= {(~id_ex_funct3[0] & ex_rs2[31]) ? -$signed(ex_rs2) : ex_rs2, 31'b0};
+              div_quotient <= 32'b0;
+              div_sign <= ~id_ex_funct3[0] & (id_ex_funct3[1] ? ex_rs1[31] :
+                            (ex_rs1[31] != ex_rs2[31]) & |ex_rs2);
+            end
+          end
+        end else begin
+          // Division in progress
+          div_dividend <= div_step_do ? div_dividend - div_divisor[31:0] : div_dividend;
+          div_divisor <= div_divisor >> 1;
+          div_quotient <= div_step_do ? div_quotient | div_quotient_msk : div_quotient;
+          div_quotient_msk <= div_quotient_msk >> 1;
+
+          // On completion, save results and clear busy flag
+          if (div_quotient_msk[0]) begin
+            div_busy <= 1'b0;
+            div_result_valid <= 1'b1;
+            // Calculate final results including the last iteration
+            // Quotient: accumulate all bits including the last one
+            div_result_q <= div_sign ?
+                            -(div_step_do ? (div_quotient | 32'd1) : div_quotient) :
+                            (div_step_do ? (div_quotient | 32'd1) : div_quotient);
+            div_result_r <= div_sign ?
+                            -(div_step_do ? (div_dividend - div_divisor[31:0]) : div_dividend) :
+                            (div_step_do ? (div_dividend - div_divisor[31:0]) : div_dividend);
+          end
+        end
       end
     end
   end

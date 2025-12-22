@@ -1,10 +1,22 @@
 #include <stdarg.h>
+#include <stdint.h>
 #include "uart.h"
 #include "gpio.h"
 
 void raystones_run(void);
 
 void print_hex_digits(unsigned int val, int nbdigits);
+
+// Performance counter functions
+static inline uint64_t rdcycle(void) {
+    uint32_t lo, hi, hi_check;
+    do {
+        asm volatile("rdcycleh %0" : "=r"(hi));
+        asm volatile("rdcycle %0" : "=r"(lo));
+        asm volatile("rdcycleh %0" : "=r"(hi_check));
+    } while (hi != hi_check);
+    return ((uint64_t)hi << 32) | lo;
+}
 
 void print_string(const char* s) {
    for(const char* p = s; *p; ++p) {
@@ -57,7 +69,42 @@ int printf(const char *fmt,...)
                  if(*fmt=='s') print_string(va_arg(ap,char *));
             else if(*fmt=='x') print_hex(va_arg(ap,int));
             else if(*fmt=='d') print_dec(va_arg(ap,int));
-            else if(*fmt=='c') putchar(va_arg(ap,int));	   
+            else if(*fmt=='u') {
+                // Print unsigned decimal (simple implementation)
+                unsigned int uval = va_arg(ap, unsigned int);
+                if (uval == 0) {
+                    putchar('0');
+                } else {
+                    char buffer[12];
+                    int i = 0;
+                    while (uval > 0) {
+                        buffer[i++] = (uval % 10) + '0';
+                        uval /= 10;
+                    }
+                    while (i > 0) {
+                        putchar(buffer[--i]);
+                    }
+                }
+            }
+            else if(*fmt=='l' && *(fmt+1)=='l' && *(fmt+2)=='u') {
+                // Print unsigned long long (64-bit)
+                fmt += 2;
+                unsigned long long ullval = va_arg(ap, unsigned long long);
+                if (ullval == 0) {
+                    putchar('0');
+                } else {
+                    char buffer[24];
+                    int i = 0;
+                    while (ullval > 0) {
+                        buffer[i++] = (ullval % 10) + '0';
+                        ullval /= 10;
+                    }
+                    while (i > 0) {
+                        putchar(buffer[--i]);
+                    }
+                }
+            }
+            else if(*fmt=='c') putchar(va_arg(ap,int));
             else putchar(*fmt);
         }
         else putchar(*fmt);
@@ -74,6 +121,7 @@ static void shell_help(void) {
     puts("  led <6-bit-bin>    - set LEDs, e.g. led 101010");
     puts("  print <text>       - print text");
     puts("  raystones          - run the raystones benchmark");
+    puts("  test-m             - test M extension (multiply/divide)");
 }
 
 static void shell_set_leds(const char *arg) {
@@ -121,6 +169,88 @@ static void shell_run_raystones(const char *arg) {
         return;
     }
     raystones_run();
+}
+
+static void shell_test_m(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: test-m");
+        return;
+    }
+
+    puts("=== M Extension Test ===");
+    puts("");
+
+    // Test 1: Basic multiplication (MUL)
+    puts("Test 1: Basic Multiplication (MUL)");
+    int a1 = 12345, b1 = 6789;
+    int mul_result = a1 * b1;
+    printf("  %d * %d = %d\n", a1, b1, mul_result);
+    printf("  Expected: %d\n", 83810205);
+    puts("");
+
+    // Test 2: Signed multiplication
+    puts("Test 2: Signed Multiplication");
+    int a2 = -1234, b2 = 5678;
+    int mul_signed = a2 * b2;
+    printf("  %d * %d = %d\n", a2, b2, mul_signed);
+    printf("  Expected: %d\n", -7006652);
+    puts("");
+
+    // Test 3: Basic division (DIV)
+    puts("Test 3: Basic Division (DIV)");
+    int a3 = 100, b3 = 7;
+    int div_result = a3 / b3;
+    int rem_result = a3 % b3;
+    printf("  %d / %d = %d (remainder %d)\n", a3, b3, div_result, rem_result);
+    printf("  Expected: 14 (remainder 2)\n");
+    puts("");
+
+    // Test 4: Signed division
+    puts("Test 4: Signed Division");
+    int a4 = -100, b4 = 7;
+    int div_signed = a4 / b4;
+    int rem_signed = a4 % b4;
+    printf("  %d / %d = %d (remainder %d)\n", a4, b4, div_signed, rem_signed);
+    printf("  Expected: -14 (remainder -2)\n");
+    puts("");
+
+    // Test 5: Large multiplication
+    puts("Test 5: Large Multiplication");
+    int a5 = 65535, b5 = 65535;
+    int mul_large = a5 * b5;
+    printf("  %d * %d = %d\n", a5, b5, mul_large);
+    printf("  Expected: %u\n", (unsigned)4294836225U);
+    puts("");
+
+    // Test 6: Division by zero (according to RISC-V spec)
+    puts("Test 6: Division by Zero");
+    volatile int a6 = 100;
+    volatile int b6 = 0;
+    volatile int div_zero = a6 / b6;
+    volatile int rem_zero = a6 % b6;
+    printf("  %d / %d = %d (remainder %d)\n", (int)a6, (int)b6, (int)div_zero, (int)rem_zero);
+    printf("  Expected: -1 (remainder 100) [RISC-V spec]\n");
+    puts("");
+
+    // Test 7: Performance test
+    puts("Test 7: Performance Test");
+
+    uint64_t cycle_start = rdcycle();
+
+    // Execute 1000 multiplication and division operations
+    volatile int sum = 0;
+    for (int i = 1; i <= 1000; i++) {
+        sum += (i * 123) / 45;
+    }
+
+    uint64_t cycle_end = rdcycle();
+    uint64_t cycles = cycle_end - cycle_start;
+
+    printf("  1000 operations completed in %llu cycles\n", cycles);
+    printf("  Result: %d\n", sum);
+    puts("");
+
+    puts("=== Test Complete ===");
 }
 
 static int str_equals(const char *a, const char *b) {
@@ -199,6 +329,8 @@ int main() {
             shell_print_text(arg);
         } else if (str_equals(cmd, "raystones")) {
             shell_run_raystones(arg);
+        } else if (str_equals(cmd, "test-m")) {
+            shell_test_m(arg);
         } else {
             puts("Unknown command. Type 'help'.");
         }

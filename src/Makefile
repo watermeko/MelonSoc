@@ -37,7 +37,7 @@ else
     BIN2HEX_EXECUTABLE = $(BUILD_DIR)/$(BIN2HEX_UTIL_NAME)
 endif
 
-ARCH_FLAGS = -march=rv32i -mabi=ilp32
+ARCH_FLAGS = -march=rv32im -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)

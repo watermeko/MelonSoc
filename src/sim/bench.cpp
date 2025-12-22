@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
   dut.rst_n = 1;
 
   // Run for a bounded number of cycles; UART output is printed by RTL under `BENCH`.
-  const int max_cycles = 2'000'000;
+  const int max_cycles = 20'000'000;
   for (int i = 0; i < max_cycles && !Verilated::gotFinish(); ++i) {
     tick(dut, time);
   }
