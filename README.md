@@ -1,5 +1,5 @@
 # 简介
-一个基于risc-v的soc，使用verilog编写，运行在Gowin GW2A上。支持RV32IM指令集，五级流水线，静态调度。
+一个基于risc-v的soc，使用verilog编写，运行在Gowin GW2A上。支持RV32IMC指令集，五级流水线，静态调度。
 外设现在只有串口。
 
 # 运行

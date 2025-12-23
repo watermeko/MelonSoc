@@ -1,6 +1,7 @@
 CROSS_COMPILE ?= riscv64-unknown-elf-
 CC = $(CROSS_COMPILE)gcc
 OBJCOPY = $(CROSS_COMPILE)objcopy
+SIZE = $(CROSS_COMPILE)size
 
 HOST_CC = gcc
 HOST_CXX ?= g++
@@ -37,7 +38,8 @@ else
     BIN2HEX_EXECUTABLE = $(BUILD_DIR)/$(BIN2HEX_UTIL_NAME)
 endif
 
-ARCH_FLAGS = -march=rv32im -mabi=ilp32
+# CPU supports RV32I + M + C (RVC is decompressed in the frontend).
+ARCH_FLAGS = -march=rv32imc -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)
@@ -78,6 +80,32 @@ OBJS = $(_C_OBJS) $(_S_OBJS)
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "Linking object files to $@"
 	$(CC) $(ARCH_FLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
+	@echo ""
+	@echo "=== Program Size and Memory Usage ==="
+	@$(SIZE) -A $@
+	@echo ""
+	@$(SIZE) -B $@
+	@echo ""
+	@echo "=== Memory Utilization (32KB each) ==="
+	@$(SIZE) -A $@ | awk ' \
+		BEGIN { text=0; data=0; rodata=0; bss=0 } \
+		/^\.text/ { text=$$2 } \
+		/^\.data/ { data=$$2 } \
+		/^\.rodata/ { rodata=$$2 } \
+		/^\.bss/ { bss=$$2 } \
+		END { \
+			progrom_used = text; \
+			dataram_used = data + rodata; \
+			progrom_percent = (progrom_used/32768)*100; \
+			dataram_percent = (dataram_used/32768)*100; \
+			ram_used = data + rodata + bss; \
+			ram_percent = (ram_used/32768)*100; \
+			printf "PROGROM (.text):         %6d / 32768 bytes (%5.2f%%)\n", progrom_used, progrom_percent; \
+			printf "DATARAM (.data+.rodata): %6d / 32768 bytes (%5.2f%%)\n", dataram_used, dataram_percent; \
+			printf "RAM usage (data+bss):    %6d / 32768 bytes (%5.2f%%)\n", ram_used, ram_percent; \
+		}'
+	@echo "========================================"
+	@echo ""
 
 # 将 C 源文件编译为目标文件的规则
 $(BUILD_DIR)/%.o: program/%.c | dirs

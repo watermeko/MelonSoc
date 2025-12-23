@@ -1,5 +1,6 @@
 `include "lib/soc_pkg.sv"
 `include "lib/bus_if.sv"
+`include "lib/rvc.sv"
 module cpu (
   input  logic clk,
   input  logic rst_n,
@@ -7,6 +8,7 @@ module cpu (
   simple_bus_if.master data
 );
   import soc_pkg::*;
+  import rvc::*;
   // ---------------------- CSRs ----------------------
   logic [63:0] csr_cycle;
   logic [63:0] csr_instret;
@@ -23,6 +25,7 @@ module cpu (
   // WB:   mem_wb_* (+ data.rdata for loads)
 
   logic halted;
+  logic halt_now;
 
   // ---------------------- Division state machine ----------------------
   logic [31:0] div_dividend;
@@ -36,11 +39,19 @@ module cpu (
   logic        div_result_valid = 1'b0;
 
   // ---------------------- IF stage ----------------------
+  // Word-fetch PC (4-byte aligned) and a small halfword buffer for RVC.
   logic [31:0] pc_f;
+  logic        if_valid; // indicates an in-flight ROM word on instr.rdata to be captured
+  logic [31:0] if_pc;    // word address associated with instr.rdata (for debug / bring-up)
+  logic [31:0] f2_word;  // registered copy of instr.rdata (BRAM-friendly)
+  logic        f2_valid; // indicates f2_word will be appended into ibuf this cycle
 
-  // F2 stage (PC+valid only; instruction comes from instr.rdata).
-  logic        if_valid;
-  logic [31:0] if_pc;
+  localparam int unsigned IBUF_HW_MAX = 8;
+  logic [16*IBUF_HW_MAX-1:0] ibuf;
+  logic [$clog2(IBUF_HW_MAX+1)-1:0] ibuf_hw_count;
+  logic [31:0] pc_i;          // next instruction PC to issue (byte address)
+  logic        drop_halfword; // drop low halfword once after redirect to 2-byte boundary
+  logic        fetch_req;
 
   // ---------------------- ID stage ----------------------
   // ID stage instruction is explicitly registered to avoid combinational feedback
@@ -48,6 +59,7 @@ module cpu (
   logic        id_valid;
   logic [31:0] id_pc;
   logic [31:0] id_instr;
+  logic [31:0] id_len;
 
   logic [31:0] instr_d;
   logic [6:0]  opcode_d;
@@ -120,6 +132,7 @@ module cpu (
   logic        id_ex_valid;
   logic [31:0] id_ex_pc;
   logic [31:0] id_ex_instr;
+  logic [31:0] id_ex_len;
   logic [4:0]  id_ex_rs1, id_ex_rs2, id_ex_rd;
   logic [2:0]  id_ex_funct3;
   logic [6:0]  id_ex_funct7;
@@ -142,7 +155,7 @@ module cpu (
   logic ex_eq, ex_ltu, ex_lt;
   logic ex_take_branch;
 
-  logic [31:0] ex_pc_plus4;
+  logic [31:0] ex_pc_plus_len;
   logic [31:0] ex_pc_plus_bimm;
   logic [31:0] ex_pc_plus_jimm;
   logic [31:0] ex_pc_plus_uimm;
@@ -202,6 +215,17 @@ module cpu (
     end
 
     stall_any = stall_load_use || stall_div;
+  end
+
+  // ---------------------- Frontend fetch gating ----------------------
+  // Keep enough headroom to append the words already in flight (ROM->F2 and F2->IBUF)
+  // and still leave room for another word fetch.
+  assign halt_now = (!halted && id_ex_valid && id_ex_isEBREAK);
+  always_comb begin
+    int pending_hw;
+    pending_hw = (f2_valid ? 2 : 0) + (if_valid ? 2 : 0);
+    fetch_req = !halted && !halt_now && !ex_redirect &&
+                ((int'(ibuf_hw_count) + pending_hw) <= (IBUF_HW_MAX - 2));
   end
 
   // ---------------------- Forwarding selection ----------------------
@@ -270,7 +294,7 @@ module cpu (
     ex_lt  = 1'b0;
     ex_take_branch = 1'b0;
 
-    ex_pc_plus4    = id_ex_pc + 32'd4;
+    ex_pc_plus_len  = id_ex_pc + id_ex_len;
     ex_pc_plus_bimm = id_ex_pc + id_ex_Bimm;
     ex_pc_plus_jimm = id_ex_pc + id_ex_Jimm;
     ex_pc_plus_uimm = id_ex_pc + id_ex_Uimm;
@@ -372,7 +396,7 @@ module cpu (
         ex_wb_value = id_ex_funct3[1] ? div_result_r : div_result_q;  // REM or DIV
       end else if (id_ex_isJAL || id_ex_isJALR) begin
         ex_wb_en    = 1'b1;
-        ex_wb_value = ex_pc_plus4;
+        ex_wb_value = ex_pc_plus_len;
       end else if (id_ex_isLUI) begin
         ex_wb_en    = 1'b1;
         ex_wb_value = id_ex_Uimm;
@@ -430,9 +454,8 @@ module cpu (
   always_comb begin
     // Keep instruction ROM access BRAM-friendly:
     // - Never feed ROM read-data back into ROM control/address combinationally.
-    // - During a stall, hold the F2 stage (`instr.rdata` + `if_pc`) stable so it can
-    //   be transferred into the ID register once the stall clears.
-    instr.addr = stall_any ? if_pc : pc_f;
+    // - Only capture ROM read-data into a register (`f2_word`), then operate on that.
+    instr.addr = pc_f;
     instr.ren  = !halted;
 
     data.addr  = ex_mem_addr;
@@ -449,13 +472,22 @@ module cpu (
       pc_f        <= 32'b0;
       if_valid    <= 1'b0;
       if_pc       <= 32'b0;
+      f2_word     <= 32'b0;
+      f2_valid    <= 1'b0;
       id_valid    <= 1'b0;
       id_pc       <= 32'b0;
       id_instr    <= 32'b0;
+      id_len      <= 32'd4;
+
+      ibuf         <= '0;
+      ibuf_hw_count <= '0;
+      pc_i          <= 32'b0;
+      drop_halfword <= 1'b0;
 
       id_ex_valid <= 1'b0;
       id_ex_pc    <= 32'b0;
       id_ex_instr <= 32'b0;
+      id_ex_len   <= 32'd4;
       id_ex_rs1   <= 5'b0;
       id_ex_rs2   <= 5'b0;
       id_ex_rd    <= 5'b0;
@@ -514,9 +546,6 @@ module cpu (
       csr_cycle   <= 64'b0;
       csr_instret <= 64'b0;
     end else begin
-      logic halt_now;
-      halt_now = (!halted && id_ex_valid && id_ex_isEBREAK);
-
       // Cycle counter always runs.
       csr_cycle <= csr_cycle + 64'd1;
 
@@ -534,27 +563,118 @@ module cpu (
         halted <= 1'b1;
       end
 
-      // IF stage
-      if (!halted && !halt_now && !stall_any) begin
-        if_pc    <= pc_f;
-        if_valid <= ex_redirect ? 1'b0 : 1'b1;
-
-        pc_f <= ex_redirect ? ex_redirect_pc : (pc_f + 32'd4);
-      end else if (!halted && halt_now) begin
-        if_valid <= 1'b0;
-      end
-
-      // ID stage (register instruction from PROGROM)
       if (!halted) begin
+        logic [16*IBUF_HW_MAX-1:0] ibuf_n;
+        logic [$clog2(IBUF_HW_MAX+1)-1:0] ibuf_cnt_n;
+        logic [31:0] pc_i_n;
+        logic drop_n;
+        logic have_hw0, have_hw1;
+        logic [15:0] hw0, hw1;
+        logic is_rvc;
+        logic [$clog2(IBUF_HW_MAX+1)-1:0] inst_hw_len;
+        logic [31:0] inst32;
+        rvc_exp_t exp;
+
+        ibuf_n     = ibuf;
+        ibuf_cnt_n = ibuf_hw_count;
+        pc_i_n     = pc_i;
+        drop_n     = drop_halfword;
+
+        if (halt_now || ex_redirect) begin
+          ibuf_n     = '0;
+          ibuf_cnt_n = '0;
+          pc_i_n     = ex_redirect ? ex_redirect_pc : pc_i;
+          drop_n     = ex_redirect ? ex_redirect_pc[1] : 1'b0;
+        end else begin
+          // Append the captured 32-bit word (F2 stage). Note that instr.rdata itself is
+          // only ever written into f2_word; we do not operate on instr.rdata directly.
+          if (f2_valid) begin
+            ibuf_n[16*ibuf_cnt_n +: 16] = f2_word[15:0];
+            ibuf_n[16*(ibuf_cnt_n + 1) +: 16] = f2_word[31:16];
+            ibuf_cnt_n = ibuf_cnt_n + 2;
+          end
+
+          // Align to 2-byte boundary after redirect by dropping the first halfword.
+          if (drop_n && (ibuf_cnt_n != 0)) begin
+            ibuf_n = ibuf_n >> 16;
+            ibuf_cnt_n = ibuf_cnt_n - 1;
+            drop_n = 1'b0;
+          end
+        end
+
+        // Issue into ID stage when not stalling.
         if (halt_now || ex_redirect) begin
           id_valid <= 1'b0;
           id_pc    <= 32'b0;
           id_instr <= 32'h0000_0013; // NOP
+          id_len   <= 32'd4;
         end else if (!stall_any) begin
-          id_valid <= if_valid;
-          id_pc    <= if_pc;
-          id_instr <= instr.rdata;
+          have_hw0 = (ibuf_cnt_n != 0);
+          have_hw1 = (ibuf_cnt_n > 1);
+          hw0      = ibuf_n[15:0];
+          hw1      = ibuf_n[31:16];
+          is_rvc   = have_hw0 && (hw0[1:0] != 2'b11);
+          inst_hw_len = is_rvc ? 1 : 2;
+
+          if (have_hw0 && (is_rvc || have_hw1)) begin
+            if (is_rvc) begin
+              exp   = rvc_expand(hw0);
+              inst32 = exp.insn;
+            end else begin
+              inst32 = {hw1, hw0};
+            end
+
+            id_valid <= 1'b1;
+            id_pc    <= pc_i_n;
+            id_instr <= inst32;
+            id_len   <= is_rvc ? 32'd2 : 32'd4;
+
+            // Pop consumed halfwords and advance PC.
+            ibuf_n = ibuf_n >> (16 * inst_hw_len);
+            ibuf_cnt_n = ibuf_cnt_n - inst_hw_len;
+            pc_i_n = pc_i_n + (is_rvc ? 32'd2 : 32'd4);
+          end else begin
+            id_valid <= 1'b0;
+            id_pc    <= pc_i_n;
+            id_instr <= 32'h0000_0013;
+            id_len   <= 32'd4;
+          end
         end
+
+        ibuf         <= ibuf_n;
+        ibuf_hw_count <= ibuf_cnt_n;
+        pc_i          <= pc_i_n;
+        drop_halfword <= drop_n;
+
+        // Capture ROM output into a register (BRAM inference-friendly).
+        if (halt_now || ex_redirect) begin
+          f2_valid <= 1'b0;
+          f2_word  <= 32'b0;
+        end else begin
+          f2_valid <= if_valid;
+          if (if_valid) begin
+            f2_word <= instr.rdata;
+          end
+        end
+      end
+
+      // Word fetch pointer and in-flight tracking.
+      if (!halted && !halt_now) begin
+        if (ex_redirect) begin
+          pc_f     <= {ex_redirect_pc[31:2], 2'b00};
+          if_pc    <= 32'b0;
+          if_valid <= 1'b0;
+        end else if (fetch_req) begin
+          if_pc    <= pc_f;
+          if_valid <= 1'b1;
+          pc_f     <= pc_f + 32'd4;
+        end else begin
+          if_pc    <= if_pc;
+          if_valid <= 1'b0;
+          pc_f     <= pc_f;
+        end
+      end else if (!halted && halt_now) begin
+        if_valid <= 1'b0;
       end
 
       // ID/EX update (bubble on stall/flush, but don't bubble for division stall)
@@ -565,6 +685,7 @@ module cpu (
           id_ex_valid  <= id_valid;
           id_ex_pc     <= id_pc;
           id_ex_instr  <= id_instr;
+          id_ex_len    <= id_len;
           id_ex_rs1    <= rs1_d;
           id_ex_rs2    <= rs2_d;
           id_ex_rd     <= rd_d;
