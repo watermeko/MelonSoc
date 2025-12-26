@@ -8,13 +8,13 @@ HOST_CXX ?= g++
 
 RTL_DIR = rtl
 SIM_DIR = sim
-RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv cpu.sv mem.sv gpio_mmio.sv uart_mmio.sv top.v)
+RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv cpu.sv mem.sv gpio_mmio.sv uart_mmio.sv i2c_mmio.sv top.v)
 SIM_CPP = $(SIM_DIR)/bench.cpp
 SIM_CPP_ABS = $(abspath $(SIM_CPP))
 
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
-_C_SOURCES = program/print.c program/uart.c program/gpio.c program/raystones.c
+_C_SOURCES = program/print.c program/uart.c program/gpio.c program/i2c.c program/raystones.c
 LINKER_SCRIPT = program/linker_pipeline.ld      
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
@@ -174,8 +174,6 @@ simulate: build $(VERILOG_SOURCES) $(SIM_CPP)
 	@echo "Running Verilator simulation..."
 	./$(VLT_MDIR)/VSOC
 	@echo "Verilator simulation finished."
-
-simulate_verilator: simulate
 
 clean:
 	@echo "Cleaning up generated files and directories..."

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "uart.h"
 #include "gpio.h"
+#include "i2c.h"
 
 void raystones_run(void);
 
@@ -120,6 +121,7 @@ static void shell_help(void) {
     puts("  help               - show this help");
     puts("  led <6-bit-bin>    - set LEDs, e.g. led 101010");
     puts("  print <text>       - print text");
+    puts("  i2c_scan           - scan I2C 7-bit addresses");
     puts("  raystones          - run the raystones benchmark");
     puts("  test-m             - test M extension (multiply/divide)");
 }
@@ -253,6 +255,27 @@ static void shell_test_m(const char *arg) {
     puts("=== Test Complete ===");
 }
 
+static void shell_i2c_scan(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: i2c_scan");
+        return;
+    }
+
+    puts("I2C scan (0x03..0x77):");
+    int found = 0;
+    for (int addr = 0x03; addr <= 0x77; ++addr) {
+        if (i2c_probe_7bit((uint8_t)addr)) {
+            printf("  found: 0x%x\n", addr);
+            found++;
+        }
+    }
+    if (found == 0) {
+        puts("  (no devices)");
+    } else {
+        printf("Done, %d device(s) found.\n", found);
+    }
+}
+
 static int str_equals(const char *a, const char *b) {
     while (*a && *b) {
         if (*a != *b)
@@ -296,6 +319,7 @@ static int read_line(char *buf, int maxlen) {
 int main() {
     uart_init();
     gpio_init();
+    i2c_init(27000000u, 100000u);
 
     puts("Simple shell ready. Type 'help' for commands.");
 
@@ -327,6 +351,8 @@ int main() {
             shell_set_leds(arg);
         } else if (str_equals(cmd, "print")) {
             shell_print_text(arg);
+        } else if (str_equals(cmd, "i2c_scan")) {
+            shell_i2c_scan(arg);
         } else if (str_equals(cmd, "raystones")) {
             shell_run_raystones(arg);
         } else if (str_equals(cmd, "test-m")) {

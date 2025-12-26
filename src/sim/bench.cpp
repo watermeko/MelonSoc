@@ -6,6 +6,10 @@ static void tick(VSOC& dut, vluint64_t& time) {
   dut.eval();
   time++;
 
+  // Model an idle I2C bus with pull-up resistors (no slave devices).
+  // Wired-AND: line is low if master drives low, else high.
+  dut.i2c_sda_in = dut.i2c_sda_drive_low ? 0 : 1;
+
   dut.clk = 1;
   dut.eval();
   time++;
@@ -18,6 +22,7 @@ int main(int argc, char** argv) {
   vluint64_t time = 0;
 
   dut.rxd = 1;
+  dut.i2c_sda_in = 1;
   dut.rst_n = 0;
   for (int i = 0; i < 10; ++i) tick(dut, time);
   dut.rst_n = 1;

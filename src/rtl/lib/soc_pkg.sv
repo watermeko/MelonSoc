@@ -9,6 +9,10 @@ package soc_pkg;
   localparam logic [XLEN-1:0] IO_LEDS_ADDR       = IO_BASE_ADDR + 32'h0000_0004;
   localparam logic [XLEN-1:0] IO_UART_DAT_ADDR   = IO_BASE_ADDR + 32'h0000_0008;
   localparam logic [XLEN-1:0] IO_UART_CTRL_ADDR  = IO_BASE_ADDR + 32'h0000_0010;
+  localparam logic [XLEN-1:0] IO_I2C_TXRX_ADDR   = IO_BASE_ADDR + 32'h0000_0020;
+  localparam logic [XLEN-1:0] IO_I2C_CMD_ADDR    = IO_BASE_ADDR + 32'h0000_0024;
+  localparam logic [XLEN-1:0] IO_I2C_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0028;
+  localparam logic [XLEN-1:0] IO_I2C_DIV_ADDR    = IO_BASE_ADDR + 32'h0000_002C;
 
   // Treat a 4KB page as the MMIO window.
   localparam logic [XLEN-1:0] MMIO_REGION_MASK   = 32'hFFFF_F000;
