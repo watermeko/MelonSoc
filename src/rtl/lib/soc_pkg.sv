@@ -14,6 +14,14 @@ package soc_pkg;
   localparam logic [XLEN-1:0] IO_I2C_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0028;
   localparam logic [XLEN-1:0] IO_I2C_DIV_ADDR    = IO_BASE_ADDR + 32'h0000_002C;
 
+  // ---------------- Timer registers ----------------
+  localparam logic [XLEN-1:0] IO_TIMER_CTRL_ADDR   = IO_BASE_ADDR + 32'h0000_0030;
+  localparam logic [XLEN-1:0] IO_TIMER_PRESC_ADDR  = IO_BASE_ADDR + 32'h0000_0034;
+  localparam logic [XLEN-1:0] IO_TIMER_COUNT_ADDR  = IO_BASE_ADDR + 32'h0000_0038;
+  localparam logic [XLEN-1:0] IO_TIMER_CMP_ADDR    = IO_BASE_ADDR + 32'h0000_003C;
+  localparam logic [XLEN-1:0] IO_TIMER_PERIOD_ADDR = IO_BASE_ADDR + 32'h0000_0040;
+  localparam logic [XLEN-1:0] IO_TIMER_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0044;
+
   // Treat a 4KB page as the MMIO window.
   localparam logic [XLEN-1:0] MMIO_REGION_MASK   = 32'hFFFF_F000;
   localparam logic [XLEN-1:0] MMIO_REGION_BASE   = IO_BASE_ADDR & MMIO_REGION_MASK;

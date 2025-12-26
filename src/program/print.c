@@ -3,6 +3,7 @@
 #include "uart.h"
 #include "gpio.h"
 #include "i2c.h"
+#include "timer.h"
 
 void raystones_run(void);
 
@@ -120,6 +121,7 @@ static void shell_help(void) {
     puts("Commands:");
     puts("  help               - show this help");
     puts("  led <6-bit-bin>    - set LEDs, e.g. led 101010");
+    puts("  blink <seconds>    - alternate LEDs every N seconds");
     puts("  print <text>       - print text");
     puts("  i2c_scan           - scan I2C 7-bit addresses");
     puts("  raystones          - run the raystones benchmark");
@@ -276,6 +278,82 @@ static void shell_i2c_scan(const char *arg) {
     }
 }
 
+static int parse_u32_dec(const char *s, uint32_t *out) {
+    if (!s)
+        return 0;
+    while (*s == ' ')
+        ++s;
+    if (*s == 0)
+        return 0;
+
+    uint32_t value = 0;
+    int any = 0;
+    while (*s >= '0' && *s <= '9') {
+        any = 1;
+        uint32_t digit = (uint32_t)(*s - '0');
+        if (value > (0xFFFFFFFFu - digit) / 10u)
+            return 0;
+        value = value * 10u + digit;
+        ++s;
+    }
+
+    while (*s == ' ')
+        ++s;
+    if (*s != 0)
+        return 0;
+
+    if (!any)
+        return 0;
+    *out = value;
+    return 1;
+}
+
+static int wait_ticks_or_keypress(uint32_t ticks) {
+    uint32_t start = timer_get_count();
+    while ((uint32_t)(timer_get_count() - start) < ticks) {
+        if (uart_getc_nonblocking() >= 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void shell_blink(const char *arg) {
+    uint32_t seconds;
+    if (!parse_u32_dec(arg, &seconds) || seconds == 0) {
+        puts("Usage: blink <seconds>");
+        return;
+    }
+
+    uint32_t tps = timer_ticks_per_sec();
+    if (tps == 0) {
+        puts("Error: timer not initialized");
+        return;
+    }
+
+    uint32_t ticks;
+    if (seconds > (0xFFFFFFFFu / tps)) {
+        puts("Error: seconds too large");
+        return;
+    }
+    ticks = seconds * tps;
+
+    puts("Blinking. Press any key to stop.");
+
+    const uint8_t pat0 = 0x15; // 010101
+    const uint8_t pat1 = 0x2A; // 101010
+    uint8_t pat = pat0;
+
+    while (1) {
+        gpio_set_leds(pat);
+        pat = (pat == pat0) ? pat1 : pat0;
+
+        if (wait_ticks_or_keypress(ticks))
+            break;
+    }
+
+    gpio_set_leds(0);
+}
+
 static int str_equals(const char *a, const char *b) {
     while (*a && *b) {
         if (*a != *b)
@@ -320,6 +398,7 @@ int main() {
     uart_init();
     gpio_init();
     i2c_init(27000000u, 100000u);
+    timer_init_1mhz(27000000u);
 
     puts("Simple shell ready. Type 'help' for commands.");
 
@@ -357,6 +436,8 @@ int main() {
             shell_run_raystones(arg);
         } else if (str_equals(cmd, "test-m")) {
             shell_test_m(arg);
+        } else if (str_equals(cmd, "blink")) {
+            shell_blink(arg);
         } else {
             puts("Unknown command. Type 'help'.");
         }

@@ -10,6 +10,7 @@
         <File path="src/rtl/i2c_mmio.sv" type="file.verilog" enable="1"/>
         <File path="src/rtl/mem.sv" type="file.verilog" enable="1"/>
         <File path="src/rtl/soc.sv" type="file.verilog" enable="1"/>
+        <File path="src/rtl/timer_mmio.sv" type="file.verilog" enable="1"/>
         <File path="src/rtl/top.v" type="file.verilog" enable="1"/>
         <File path="src/rtl/uart_mmio.sv" type="file.verilog" enable="1"/>
         <File path="src/constraints/melon-riscv.cst" type="file.cst" enable="1"/>

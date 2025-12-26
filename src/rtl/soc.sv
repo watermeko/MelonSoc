@@ -23,6 +23,7 @@ module SOC (
   simple_bus_if mmio_gpio_bus();
   simple_bus_if mmio_uart_bus();
   simple_bus_if mmio_i2c_bus();
+  simple_bus_if mmio_timer_bus();
 
   cpu u_cpu (
     .clk(clk),
@@ -78,6 +79,7 @@ module SOC (
   logic sel_leds;
   logic sel_uart;
   logic sel_i2c;
+  logic sel_timer;
 
   always_comb begin
     sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
@@ -87,6 +89,12 @@ module SOC (
                (align_word(mmio_bus.addr) == IO_I2C_CMD_ADDR) ||
                (align_word(mmio_bus.addr) == IO_I2C_STATUS_ADDR) ||
                (align_word(mmio_bus.addr) == IO_I2C_DIV_ADDR);
+    sel_timer = (align_word(mmio_bus.addr) == IO_TIMER_CTRL_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_TIMER_PRESC_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_TIMER_COUNT_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_TIMER_CMP_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_TIMER_PERIOD_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_TIMER_STATUS_ADDR);
 
     mmio_gpio_bus.addr  = mmio_bus.addr;
     mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
@@ -105,6 +113,12 @@ module SOC (
     mmio_i2c_bus.wen   = mmio_bus.wen & sel_i2c;
     mmio_i2c_bus.wdata = mmio_bus.wdata;
     mmio_i2c_bus.wstrb = mmio_bus.wstrb;
+
+    mmio_timer_bus.addr  = mmio_bus.addr;
+    mmio_timer_bus.ren   = mmio_bus.ren & sel_timer;
+    mmio_timer_bus.wen   = mmio_bus.wen & sel_timer;
+    mmio_timer_bus.wdata = mmio_bus.wdata;
+    mmio_timer_bus.wstrb = mmio_bus.wstrb;
   end
 
   gpio_mmio #(
@@ -133,6 +147,12 @@ module SOC (
     .i2c_sda_in(i2c_sda_in)
   );
 
+  timer_mmio u_timer_mmio (
+    .clk(clk),
+    .rst_n(rst_n),
+    .bus(mmio_timer_bus)
+  );
+
   logic [31:0] mmio_rdata_comb;
   logic [31:0] mmio_rdata_q;
 
@@ -141,6 +161,7 @@ module SOC (
       sel_leds: mmio_rdata_comb = mmio_gpio_bus.rdata;
       sel_uart: mmio_rdata_comb = mmio_uart_bus.rdata;
       sel_i2c:  mmio_rdata_comb = mmio_i2c_bus.rdata;
+      sel_timer: mmio_rdata_comb = mmio_timer_bus.rdata;
       default:  mmio_rdata_comb = 32'b0;
     endcase
   end
