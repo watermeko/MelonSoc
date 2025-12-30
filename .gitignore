@@ -1,10 +1,8 @@
 src/build/
 src/obj_dir/
 
-impl/
-!impl/*.json
-.claude/
-CLAUDE.md
+impl/*
+!impl/melon-riscv_process_config.json
 
 melon-riscv.gprj.user
 docs/

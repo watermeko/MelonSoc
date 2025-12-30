@@ -16,13 +16,13 @@ help:
 	@echo "  load           - Load the design onto the FPGA"
 	@echo "  load_flash     - Load the design into flash memory"
 	@echo "  build_fpga     - Build FPGA bitstream via gw_sh (STAGE=all|syn|pnr, default: all)"
+	@echo "  terminal       - Open serial terminal to the FPGA board"
 
 all: help
 
 build clean dirs simulate load load_flash:
 	@$(SRC_MAKE) $@
 
-# 合并后的入口：用 STAGE 控制 run 阶段（默认 all）
 build_fpga:
 	@stage="$(STAGE)"; \
 	[ -n "$$stage" ] || stage="all"; \
@@ -32,4 +32,6 @@ build_fpga:
 	QT_QPA_PLATFORM=minimal gw_sh "$$script"; \
 	rm -f "$$script"
 
+terminal:
+	picocom -b 115200 --imap lfcrlf,crcrlf --omap delbs,crlf --flow n /dev/ttyUSB1
 

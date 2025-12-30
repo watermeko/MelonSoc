@@ -3,6 +3,8 @@
 #include "uart.h"
 #include "gpio.h"
 #include "i2c.h"
+#include "spi.h"
+#include "sdcard.h"
 #include "timer.h"
 
 void raystones_run(void);
@@ -124,6 +126,7 @@ static void shell_help(void) {
     puts("  blink <seconds>    - alternate LEDs every N seconds");
     puts("  print <text>       - print text");
     puts("  i2c_scan           - scan I2C 7-bit addresses");
+    puts("  sdcard_rd <skip> <count> - read sector 0 and hex dump bytes");
     puts("  raystones          - run the raystones benchmark");
     puts("  test-m             - test M extension (multiply/divide)");
 }
@@ -308,6 +311,50 @@ static int parse_u32_dec(const char *s, uint32_t *out) {
     return 1;
 }
 
+static int parse_u32_dec_prefix(const char **ps, uint32_t *out) {
+    const char *s = ps ? *ps : 0;
+    if (!s)
+        return 0;
+
+    while (*s == ' ')
+        ++s;
+    if (*s == 0)
+        return 0;
+
+    uint32_t value = 0;
+    int any = 0;
+    while (*s >= '0' && *s <= '9') {
+        any = 1;
+        uint32_t digit = (uint32_t)(*s - '0');
+        if (value > (0xFFFFFFFFu - digit) / 10u)
+            return 0;
+        value = value * 10u + digit;
+        ++s;
+    }
+
+    if (!any)
+        return 0;
+    *out = value;
+    *ps = s;
+    return 1;
+}
+
+static int parse_two_u32_dec(const char *s, uint32_t *a, uint32_t *b) {
+    if (!s)
+        return 0;
+    if (!parse_u32_dec_prefix(&s, a))
+        return 0;
+    while (*s == ' ')
+        ++s;
+    if (*s == 0)
+        return 0;
+    if (!parse_u32_dec_prefix(&s, b))
+        return 0;
+    while (*s == ' ')
+        ++s;
+    return *s == 0;
+}
+
 static int wait_ticks_or_keypress(uint32_t ticks) {
     uint32_t start = timer_get_count();
     while ((uint32_t)(timer_get_count() - start) < ticks) {
@@ -354,6 +401,37 @@ static void shell_blink(const char *arg) {
     gpio_set_leds(0);
 }
 
+static void shell_sdcard_rd(const char *arg) {
+    uint32_t skip, count;
+    if (!parse_two_u32_dec(arg, &skip, &count)) {
+        puts("Usage: sdcard_rd <skip> <count>");
+        return;
+    }
+    if (skip >= 512u || count > 512u || (skip + count) > 512u) {
+        puts("Error: range must be within 0..511");
+        return;
+    }
+
+    static uint8_t sector[512];
+    if (sdcard_read_block(0u, sector) != 0) {
+        printf("Error: sdcard read failed (err=0x%x)\n", (unsigned int)sdcard_last_error());
+        return;
+    }
+
+    puts("SD sector0:");
+    static const char hex[] = "0123456789ABCDEF";
+    for (uint32_t i = 0; i < count; ++i) {
+        uint8_t b = sector[skip + i];
+        putchar(hex[b >> 4]);
+        putchar(hex[b & 0x0F]);
+        putchar(' ');
+        if ((i & 15u) == 15u)
+            putchar('\n');
+    }
+    if ((count & 15u) != 0u)
+        putchar('\n');
+}
+
 static int str_equals(const char *a, const char *b) {
     while (*a && *b) {
         if (*a != *b)
@@ -398,6 +476,7 @@ int main() {
     uart_init();
     gpio_init();
     i2c_init(27000000u, 100000u);
+    spi_init(27000000u, 200000u);
     timer_init_1mhz(27000000u);
 
     puts("Simple shell ready. Type 'help' for commands.");
@@ -438,6 +517,8 @@ int main() {
             shell_test_m(arg);
         } else if (str_equals(cmd, "blink")) {
             shell_blink(arg);
+        } else if (str_equals(cmd, "sdcard_rd")) {
+            shell_sdcard_rd(arg);
         } else {
             puts("Unknown command. Type 'help'.");
         }

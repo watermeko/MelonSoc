@@ -22,6 +22,12 @@ package soc_pkg;
   localparam logic [XLEN-1:0] IO_TIMER_PERIOD_ADDR = IO_BASE_ADDR + 32'h0000_0040;
   localparam logic [XLEN-1:0] IO_TIMER_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0044;
 
+  // ---------------- SPI registers ----------------
+  localparam logic [XLEN-1:0] IO_SPI_TXRX_ADDR   = IO_BASE_ADDR + 32'h0000_0050;
+  localparam logic [XLEN-1:0] IO_SPI_CTRL_ADDR   = IO_BASE_ADDR + 32'h0000_0054;
+  localparam logic [XLEN-1:0] IO_SPI_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0058;
+  localparam logic [XLEN-1:0] IO_SPI_DIV_ADDR    = IO_BASE_ADDR + 32'h0000_005C;
+
   // Treat a 4KB page as the MMIO window.
   localparam logic [XLEN-1:0] MMIO_REGION_MASK   = 32'hFFFF_F000;
   localparam logic [XLEN-1:0] MMIO_REGION_BASE   = IO_BASE_ADDR & MMIO_REGION_MASK;

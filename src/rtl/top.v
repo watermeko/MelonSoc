@@ -7,7 +7,12 @@ module top(
   input  rxd,        // UART receive
   output txd,        // UART transmit
   inout  i2c_scl,    // I2C clock (open-drain)
-  inout  i2c_sda     // I2C data  (open-drain)
+  inout  i2c_sda,    // I2C data  (open-drain)
+
+  output sd_cs_n,    // SD card SPI CS (active-low)
+  output sd_sck,     // SD card SPI clock
+  output sd_mosi,    // SD card SPI MOSI
+  input  sd_miso     // SD card SPI MISO
 );
 
 wire i2c_scl_drive_low;
@@ -26,6 +31,10 @@ SOC u_soc(
     .txd        (txd       ),
     .i2c_scl_drive_low(i2c_scl_drive_low),
     .i2c_sda_drive_low(i2c_sda_drive_low),
-    .i2c_sda_in(i2c_sda_in)
+    .i2c_sda_in(i2c_sda_in),
+    .spi_cs_n(sd_cs_n),
+    .spi_sck(sd_sck),
+    .spi_mosi(sd_mosi),
+    .spi_miso(sd_miso)
 );
 endmodule

@@ -10,7 +10,13 @@ module SOC (
   // I2C (open-drain): drive_low=1 pulls line low, 0 releases (needs pull-up).
   output logic i2c_scl_drive_low,
   output logic i2c_sda_drive_low,
-  input  logic i2c_sda_in
+  input  logic i2c_sda_in,
+
+  // SPI (SD card)
+  output logic spi_cs_n,
+  output logic spi_sck,
+  output logic spi_mosi,
+  input  logic spi_miso
 );
   import soc_pkg::*;
 
@@ -24,6 +30,7 @@ module SOC (
   simple_bus_if mmio_uart_bus();
   simple_bus_if mmio_i2c_bus();
   simple_bus_if mmio_timer_bus();
+  simple_bus_if mmio_spi_bus();
 
   cpu u_cpu (
     .clk(clk),
@@ -80,6 +87,7 @@ module SOC (
   logic sel_uart;
   logic sel_i2c;
   logic sel_timer;
+  logic sel_spi;
 
   always_comb begin
     sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
@@ -95,6 +103,10 @@ module SOC (
                 (align_word(mmio_bus.addr) == IO_TIMER_CMP_ADDR) ||
                 (align_word(mmio_bus.addr) == IO_TIMER_PERIOD_ADDR) ||
                 (align_word(mmio_bus.addr) == IO_TIMER_STATUS_ADDR);
+    sel_spi = (align_word(mmio_bus.addr) == IO_SPI_TXRX_ADDR) ||
+              (align_word(mmio_bus.addr) == IO_SPI_CTRL_ADDR) ||
+              (align_word(mmio_bus.addr) == IO_SPI_STATUS_ADDR) ||
+              (align_word(mmio_bus.addr) == IO_SPI_DIV_ADDR);
 
     mmio_gpio_bus.addr  = mmio_bus.addr;
     mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
@@ -119,6 +131,12 @@ module SOC (
     mmio_timer_bus.wen   = mmio_bus.wen & sel_timer;
     mmio_timer_bus.wdata = mmio_bus.wdata;
     mmio_timer_bus.wstrb = mmio_bus.wstrb;
+
+    mmio_spi_bus.addr  = mmio_bus.addr;
+    mmio_spi_bus.ren   = mmio_bus.ren & sel_spi;
+    mmio_spi_bus.wen   = mmio_bus.wen & sel_spi;
+    mmio_spi_bus.wdata = mmio_bus.wdata;
+    mmio_spi_bus.wstrb = mmio_bus.wstrb;
   end
 
   gpio_mmio #(
@@ -153,6 +171,16 @@ module SOC (
     .bus(mmio_timer_bus)
   );
 
+  spi_mmio u_spi_mmio (
+    .clk(clk),
+    .rst_n(rst_n),
+    .bus(mmio_spi_bus),
+    .spi_cs_n(spi_cs_n),
+    .spi_sck(spi_sck),
+    .spi_mosi(spi_mosi),
+    .spi_miso(spi_miso)
+  );
+
   logic [31:0] mmio_rdata_comb;
   logic [31:0] mmio_rdata_q;
 
@@ -162,6 +190,7 @@ module SOC (
       sel_uart: mmio_rdata_comb = mmio_uart_bus.rdata;
       sel_i2c:  mmio_rdata_comb = mmio_i2c_bus.rdata;
       sel_timer: mmio_rdata_comb = mmio_timer_bus.rdata;
+      sel_spi:  mmio_rdata_comb = mmio_spi_bus.rdata;
       default:  mmio_rdata_comb = 32'b0;
     endcase
   end
