@@ -5,15 +5,8 @@
     <Version>5</Version>
     <Device name="GW2A-18C" pn="GW2A-LV18PG256C8/I7">gw2a18c-011</Device>
     <FileList>
-        <File path="src/rtl/cpu.sv" type="file.verilog" enable="1"/>
-        <File path="src/rtl/gpio_mmio.sv" type="file.verilog" enable="1"/>
-        <File path="src/rtl/i2c_mmio.sv" type="file.verilog" enable="1"/>
-        <File path="src/rtl/mem.sv" type="file.verilog" enable="1"/>
         <File path="src/rtl/soc.sv" type="file.verilog" enable="1"/>
-        <File path="src/rtl/timer_mmio.sv" type="file.verilog" enable="1"/>
         <File path="src/rtl/top.v" type="file.verilog" enable="1"/>
-        <File path="src/rtl/uart_mmio.sv" type="file.verilog" enable="1"/>
-        <File path="src/rtl/spi_mmio.sv" type="file.verilog" enable="1"/>
         <File path="src/constraints/melon-riscv.cst" type="file.cst" enable="1"/>
         <File path="src/constraints/timing.sdc" type="file.sdc" enable="1"/>
     </FileList>

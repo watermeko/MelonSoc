@@ -271,7 +271,6 @@ function automatic rvc_exp_t rvc_expand(input logic [15:0] c);
   endcase
 
   if (r.illegal) begin
-    // No trap support: treat illegal as NOP.
     r.insn = 32'h0000_0013;
   end
   return r;

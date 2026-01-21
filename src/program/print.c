@@ -221,11 +221,11 @@ static void shell_test_m(const char *arg) {
     printf("  Expected: -14 (remainder -2)\n");
     puts("");
 
-    // Test 5: Large multiplication
+    // Test 5: Large multiplication (unsigned)
     puts("Test 5: Large Multiplication");
-    int a5 = 65535, b5 = 65535;
-    int mul_large = a5 * b5;
-    printf("  %d * %d = %d\n", a5, b5, mul_large);
+    unsigned int a5 = 65535, b5 = 65535;
+    unsigned int mul_large = a5 * b5;
+    printf("  %u * %u = %u\n", a5, b5, mul_large);
     printf("  Expected: %u\n", (unsigned)4294836225U);
     puts("");
 

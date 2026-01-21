@@ -6,7 +6,6 @@ static void tick(VSOC& dut, vluint64_t& time) {
   dut.eval();
   time++;
 
-  dut.i2c_sda_in = dut.i2c_sda_drive_low ? 0 : 1;
   dut.spi_miso = 1;
 
   dut.clk = 1;
@@ -21,7 +20,7 @@ int main(int argc, char** argv) {
   vluint64_t time = 0;
 
   dut.rxd = 1;
-  dut.i2c_sda_in = 1;
+  dut.i2c_sda= 1;
   dut.spi_miso = 1;
   dut.rst_n = 0;
   for (int i = 0; i < 10; ++i) tick(dut, time);

@@ -8,7 +8,7 @@ HOST_CXX ?= g++
 
 RTL_DIR = rtl
 SIM_DIR = sim
-RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv cpu.sv mem.sv gpio_mmio.sv uart_mmio.sv i2c_mmio.sv timer_mmio.sv spi_mmio.sv top.v)
+RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv top.v)
 SIM_CPP = $(SIM_DIR)/bench.cpp
 SIM_CPP_ABS = $(abspath $(SIM_CPP))
 
