@@ -1,4 +1,5 @@
 `include "../peripheral/gpio_mmio.sv"
+`include "../peripheral/ddr3_app_mmio.sv"
 `include "../peripheral/i2c_mmio.sv"
 `include "../peripheral/spi_mmio.sv"
 `include "../peripheral/timer_mmio.sv"

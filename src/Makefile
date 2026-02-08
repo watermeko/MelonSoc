@@ -14,7 +14,7 @@ SIM_CPP_ABS = $(abspath $(SIM_CPP))
 
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
-_C_SOURCES = program/print.c program/uart.c program/gpio.c program/i2c.c program/timer.c program/spi.c program/sdcard.c program/raystones.c
+_C_SOURCES = program/print.c program/uart.c program/gpio.c program/i2c.c program/timer.c program/spi.c program/sdcard.c program/raystones.c program/ddr.c
 LINKER_SCRIPT = program/linker_pipeline.ld      
 
 BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 

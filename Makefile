@@ -29,7 +29,7 @@ build_fpga:
 	case "$$stage" in all|syn|pnr) ;; *) echo "Invalid STAGE=$$stage (use: all|syn|pnr)"; exit 2;; esac; \
 	script="gw_script_$$stage.tcl"; \
 	echo "open_project melon-riscv.gprj\nrun $$stage" > "$$script"; \
-	QT_QPA_PLATFORM=minimal gw_sh "$$script"; \
+	LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libfreetype.so.6 QT_QPA_PLATFORM=minimal gw_sh "$$script"; \
 	rm -f "$$script"
 
 terminal:

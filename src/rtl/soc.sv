@@ -5,6 +5,7 @@
 `include "include/peripherals.sv"
 module SOC (
         input  logic clk,
+        input  logic ddr_app_clk,
         input  logic rst_n,
         output logic [5:0] leds,
         input  logic rxd,
@@ -16,7 +17,25 @@ module SOC (
         output logic spi_cs_n,
         output logic spi_sck,
         output logic spi_mosi,
-        input  logic spi_miso
+        input  logic spi_miso,
+
+        // DDR3 APP 接口（对接 Gowin DDR3_Memory_Interface_Top）
+        output logic [27:0] ddr_app_addr,
+        output logic        ddr_app_cmd_en,
+        output logic [2:0]  ddr_app_cmd,
+        input  logic        ddr_app_cmd_rdy,
+
+        output logic        ddr_app_wren,
+        output logic        ddr_app_data_end,
+        output logic [127:0] ddr_app_data,
+        input  logic         ddr_app_data_rdy,
+
+        input  logic         ddr_app_rdata_valid,
+        input  logic         ddr_app_rdata_end,
+        input  logic [127:0] ddr_app_rdata,
+
+        input  logic         ddr_init_calib_complete,
+        output logic [5:0]   ddr_app_burst_number
     );
     import soc_pkg::*;
 
@@ -31,6 +50,7 @@ module SOC (
     simple_bus_if mmio_i2c_bus();
     simple_bus_if mmio_timer_bus();
     simple_bus_if mmio_spi_bus();
+    simple_bus_if mmio_ddr_bus();
 
     cpu u_cpu (
             .clk(clk),
@@ -86,6 +106,7 @@ module SOC (
     logic sel_i2c;
     logic sel_timer;
     logic sel_spi;
+    logic sel_ddr;
 
     always_comb begin
         sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
@@ -105,6 +126,19 @@ module SOC (
                 (align_word(mmio_bus.addr) == IO_SPI_CTRL_ADDR) ||
                 (align_word(mmio_bus.addr) == IO_SPI_STATUS_ADDR) ||
                 (align_word(mmio_bus.addr) == IO_SPI_DIV_ADDR);
+
+        sel_ddr = (align_word(mmio_bus.addr) == IO_DDR_CTRL_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_STATUS_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_ADDR_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_BURST_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_WDATA0_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_WDATA1_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_WDATA2_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_WDATA3_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_RDATA0_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_RDATA1_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_RDATA2_ADDR) ||
+                (align_word(mmio_bus.addr) == IO_DDR_RDATA3_ADDR);
 
         mmio_gpio_bus.addr  = mmio_bus.addr;
         mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
@@ -135,6 +169,12 @@ module SOC (
         mmio_spi_bus.wen   = mmio_bus.wen & sel_spi;
         mmio_spi_bus.wdata = mmio_bus.wdata;
         mmio_spi_bus.wstrb = mmio_bus.wstrb;
+
+        mmio_ddr_bus.addr  = mmio_bus.addr;
+        mmio_ddr_bus.ren   = mmio_bus.ren & sel_ddr;
+        mmio_ddr_bus.wen   = mmio_bus.wen & sel_ddr;
+        mmio_ddr_bus.wdata = mmio_bus.wdata;
+        mmio_ddr_bus.wstrb = mmio_bus.wstrb;
     end
 
     gpio_mmio #(
@@ -178,6 +218,30 @@ module SOC (
                  .spi_miso(spi_miso)
              );
 
+    ddr3_app_mmio u_ddr3_app_mmio (
+                     .clk(clk),
+                     .app_clk(ddr_app_clk),
+                     .rst_n(rst_n),
+                     .bus(mmio_ddr_bus),
+
+                     .app_addr(ddr_app_addr),
+                     .app_cmd_en(ddr_app_cmd_en),
+                     .app_cmd(ddr_app_cmd),
+                     .app_cmd_rdy(ddr_app_cmd_rdy),
+
+                     .app_wren(ddr_app_wren),
+                     .app_data_end(ddr_app_data_end),
+                     .app_data(ddr_app_data),
+                     .app_data_rdy(ddr_app_data_rdy),
+
+                     .app_rdata_valid(ddr_app_rdata_valid),
+                     .app_rdata_end(ddr_app_rdata_end),
+                     .app_rdata(ddr_app_rdata),
+
+                     .init_calib_complete(ddr_init_calib_complete),
+                     .app_burst_number(ddr_app_burst_number)
+                 );
+
     logic [31:0] mmio_rdata_comb;
     logic [31:0] mmio_rdata_q;
 
@@ -193,6 +257,8 @@ module SOC (
                        mmio_rdata_comb = mmio_timer_bus.rdata;
                    sel_spi:
                        mmio_rdata_comb = mmio_spi_bus.rdata;
+                   sel_ddr:
+                       mmio_rdata_comb = mmio_ddr_bus.rdata;
                    default:
                        mmio_rdata_comb = 32'b0;
                endcase
@@ -219,4 +285,5 @@ module SOC (
                end
            end
 `endif
-       endmodule
+
+endmodule
