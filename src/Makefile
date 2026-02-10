@@ -11,6 +11,7 @@ SIM_DIR = sim
 RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv top.v)
 SIM_CPP = $(SIM_DIR)/bench.cpp
 SIM_CPP_ABS = $(abspath $(SIM_CPP))
+SIM_ARGS ?=
 
 TARGET_NAME = program
 _S = program/$(TARGET_NAME).s       
@@ -172,7 +173,7 @@ simulate: build $(VERILOG_SOURCES) $(SIM_CPP)
 	@rm -f /tmp/melonsoc_cxx_test
 	$(MAKE) -C $(VLT_MDIR) -f VSOC.mk CXX=$(HOST_CXX)
 	@echo "Running Verilator simulation..."
-	./$(VLT_MDIR)/VSOC
+	./$(VLT_MDIR)/VSOC $(SIM_ARGS)
 	@echo "Verilator simulation finished."
 
 clean:
