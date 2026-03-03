@@ -14,11 +14,19 @@ SIM_CPP_ABS = $(abspath $(SIM_CPP))
 SIM_ARGS ?=
 
 TARGET_NAME = program
-_S = program/$(TARGET_NAME).s       
-_C_SOURCES = program/print.c program/uart.c program/gpio.c program/i2c.c program/timer.c program/spi.c program/sdcard.c program/raystones.c program/ddr.c
-LINKER_SCRIPT = program/linker_pipeline.ld      
+_S = program/boot/$(TARGET_NAME).s       
+_C_SOURCES = program/utils/print.c \
+             program/drivers/uart.c \
+             program/drivers/gpio.c \
+             program/drivers/i2c.c \
+             program/drivers/timer.c \
+             program/drivers/spi.c \
+             program/drivers/sdcard.c \
+             program/app/raystones.c \
+             program/drivers/ddr.c
+LINKER_SCRIPT = program/boot/linker_pipeline.ld      
 
-BIN2HEX_C_SRC = program/bin_to_verilog_hex.c 
+BIN2HEX_C_SRC = program/tools/bin_to_verilog_hex.c
 
 VERILOG_SOURCES = $(RTL_SOURCES)
 BUILD_DIR = build
@@ -45,7 +53,7 @@ PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)
 CFLAGS_S = $(CFLAGS_COMMON)
-CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions -ffunction-sections -fdata-sections -Iprogram # 缩小代码尺寸，-Iprogram 用于 program/ 目录下的头文件
+CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions -ffunction-sections -fdata-sections -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/boot # 缩小代码尺寸，用于头文件
 
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
@@ -110,11 +118,13 @@ $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 
 # 将 C 源文件编译为目标文件的规则
 $(BUILD_DIR)/%.o: program/%.c | dirs
+	@mkdir -p $(dir $@)
 	@echo "Compiling C source: $< -> $@"
 	$(CC) $(CFLAGS_C) -c $< -o $@
 
 # 将汇编源文件汇编为目标文件的规则
 $(BUILD_DIR)/%.o: program/%.s | dirs
+	@mkdir -p $(dir $@)
 	@echo "Assembling: $< -> $@"
 	$(CC) $(CFLAGS_S) -c $< -o $@
 

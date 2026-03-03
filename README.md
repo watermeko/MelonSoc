@@ -14,18 +14,6 @@ make load_flash # 下载程序到FLASH
 make terminal # 串口终端
 ```
 
-# 仿真里输入串口命令
-```bash
-cd src
-make simulate
-# 从文件一次性注入一串命令
-make simulate SIM_ARGS="--uart-file cmds.txt"
-# 限制仿真周期数（避免一直跑）
-make simulate SIM_ARGS="--max-cycles 200000"
-```
-
 # 运行效果
 ![PIC](https://github.com/watermeko/picx-images-hosting/raw/master/all/blog/图片.7lkgwh9fgb.webp)
-# TODO
-+ 添加更多外设
-+ 把DDR作为内存
+
