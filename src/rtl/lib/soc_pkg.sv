@@ -32,6 +32,12 @@
             localparam logic [31:0] IO_SPI_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0058;
             localparam logic [31:0] IO_SPI_DIV_ADDR    = IO_BASE_ADDR + 32'h0000_005C;
 
+            // MTIME
+            localparam logic [31:0] IO_MTIME_LO_ADDR    = IO_BASE_ADDR + 32'h0000_0060;
+            localparam logic [31:0] IO_MTIME_HI_ADDR    = IO_BASE_ADDR + 32'h0000_0064;
+            localparam logic [31:0] IO_MTIMECMP_LO_ADDR = IO_BASE_ADDR + 32'h0000_0068;
+            localparam logic [31:0] IO_MTIMECMP_HI_ADDR = IO_BASE_ADDR + 32'h0000_006C;
+
             // DDR3 APP（参考 ref/src/ddr3_syn_top.v 的 app_* 接口）
             // CTRL   @ IO_DDR_CTRL_ADDR:
             //   [0] START（脉冲触发一次操作）, [1] WRITE（1=写,0=读）

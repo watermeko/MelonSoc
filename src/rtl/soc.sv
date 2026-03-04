@@ -51,13 +51,14 @@ module SOC (
     simple_bus_if mmio_timer_bus();
     simple_bus_if mmio_spi_bus();
     simple_bus_if mmio_ddr_bus();
+    simple_bus_if mmio_mtime_bus();
 
     cpu u_cpu (
             .clk(clk),
             .rst_n(rst_n),
-            .ext_irq(1'b0),
+            .ext_irq(timer_irq),
             .sw_irq(1'b0),
-            .timer_irq(timer_irq),
+            .timer_irq(mtime_irq),
             .instr(instr_bus),
             .data(cpu_data_bus)
         );
@@ -110,6 +111,7 @@ module SOC (
     logic sel_timer;
     logic sel_spi;
     logic sel_ddr;
+    logic sel_mtime;
 
     always_comb begin
         sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
@@ -142,6 +144,11 @@ module SOC (
                 (align_word(mmio_bus.addr) == IO_DDR_RDATA1_ADDR) ||
                 (align_word(mmio_bus.addr) == IO_DDR_RDATA2_ADDR) ||
                 (align_word(mmio_bus.addr) == IO_DDR_RDATA3_ADDR);
+
+        sel_mtime = (align_word(mmio_bus.addr) == IO_MTIME_LO_ADDR) ||
+                  (align_word(mmio_bus.addr) == IO_MTIME_HI_ADDR) ||
+                  (align_word(mmio_bus.addr) == IO_MTIMECMP_LO_ADDR) ||
+                  (align_word(mmio_bus.addr) == IO_MTIMECMP_HI_ADDR);
 
         mmio_gpio_bus.addr  = mmio_bus.addr;
         mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
@@ -178,6 +185,12 @@ module SOC (
         mmio_ddr_bus.wen   = mmio_bus.wen & sel_ddr;
         mmio_ddr_bus.wdata = mmio_bus.wdata;
         mmio_ddr_bus.wstrb = mmio_bus.wstrb;
+
+        mmio_mtime_bus.addr  = mmio_bus.addr;
+        mmio_mtime_bus.ren   = mmio_bus.ren & sel_mtime;
+        mmio_mtime_bus.wen   = mmio_bus.wen & sel_mtime;
+        mmio_mtime_bus.wdata = mmio_bus.wdata;
+        mmio_mtime_bus.wstrb = mmio_bus.wstrb;
     end
 
     gpio_mmio #(
@@ -212,6 +225,14 @@ module SOC (
                    .rst_n(rst_n),
                    .timer_irq(timer_irq),
                    .bus(mmio_timer_bus)
+               );
+
+    logic mtime_irq;
+    mtime_mmio u_mtime_mmio (
+                   .clk(clk),
+                   .rst_n(rst_n),
+                   .timer_irq(mtime_irq),
+                   .bus(mmio_mtime_bus)
                );
 
     spi_mmio u_spi_mmio (
@@ -265,6 +286,8 @@ module SOC (
                        mmio_rdata_comb = mmio_spi_bus.rdata;
                    sel_ddr:
                        mmio_rdata_comb = mmio_ddr_bus.rdata;
+                   sel_mtime:
+                       mmio_rdata_comb = mmio_mtime_bus.rdata;
                    default:
                        mmio_rdata_comb = 32'b0;
                endcase

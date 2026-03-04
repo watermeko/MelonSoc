@@ -6,6 +6,7 @@
 #include "spi.h"
 #include "sdcard.h"
 #include "timer.h"
+#include "mtime.h"
 #include "ddr.h"
 #include "test_csr.h"
 
@@ -135,6 +136,7 @@ static void shell_help(void) {
     puts("  test-m             - test M extension (multiply/divide)");
     puts("  test-csr           - test CSRs and trap handling");
     puts("  test-irq           - test asynchronous hardware interrupts");
+    puts("  test-mtime         - read and display machine timer");
 }
 
 static void shell_set_leds(const char *arg) {
@@ -190,7 +192,7 @@ static void shell_test_irq(const char *arg) {
         return;
     }
 
-    printf("--- Timer Interrupt Test Start ---\n");
+    printf("--- Timer Peripheral (External) Interrupt Test Start ---\n");
 
     uint32_t trap_addr = (uint32_t)&trap_handler;
     asm volatile("csrw mtvec, %0" :: "r"(trap_addr));
@@ -198,7 +200,7 @@ static void shell_test_irq(const char *arg) {
     trap_hit_flag = 0;
     trap_cause_val = 0;
 
-    asm volatile("csrs mie, %0" :: "r"(1 << 7));
+    asm volatile("csrs mie, %0" :: "r"(1 << 11));
 
     uint32_t current_time = timer_get_count();
     *timer_cmp_reg() = current_time + 50000;
@@ -218,14 +220,59 @@ static void shell_test_irq(const char *arg) {
     }
 
     asm volatile("csrc mstatus, %0" :: "r"(1 << 3));
+    asm volatile("csrc mie, %0" :: "r"(1 << 11));
+
+    if (trap_hit_flag) {
+        if (trap_cause_val == 0x8000000B) {
+            printf("[OK] Timer peripheral interrupt correctly triggered and handled.\n");
+            printf("--- TIMER PERIPHERAL TEST PASSED! ---\n");
+        } else {
+            printf("[FAIL] Interrupt triggered but wrong cause: 0x%x (expected 0x8000000B)\n", trap_cause_val);
+        }
+    }
+}
+
+static void shell_test_mtime(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: test-mtime");
+        return;
+    }
+
+    printf("--- Machine Timer (mtime) Interrupt Test Start ---\n");
+
+    uint32_t trap_addr = (uint32_t)&trap_handler;
+    asm volatile("csrw mtvec, %0" :: "r"(trap_addr));
+    
+    trap_hit_flag = 0;
+    trap_cause_val = 0;
+
+    asm volatile("csrs mie, %0" :: "r"(1 << 7));
+
+    uint64_t current = mtime_read();
+    mtimecmp_write(current + 50000);
+
+    asm volatile("csrs mstatus, %0" :: "r"(1 << 3));
+
+    printf("Waiting for mtime interrupt...\n");
+
+    int timeout = 0;
+    while (!trap_hit_flag) {
+        timeout++;
+        if (timeout > 1000000) {
+            printf("[FAIL] Timeout waiting for interrupt.\n");
+            break;
+        }
+    }
+
+    asm volatile("csrc mstatus, %0" :: "r"(1 << 3));
     asm volatile("csrc mie, %0" :: "r"(1 << 7));
 
     if (trap_hit_flag) {
         if (trap_cause_val == 0x80000007) {
-            printf("[OK] Timer interrupt correctly triggered and handled.\n");
-            printf("--- IRQ TEST PASSED! ---\n");
+            printf("[OK] mtime interrupt correctly triggered and handled.\n");
+            printf("--- MTIME TEST PASSED! ---\n");
         } else {
-            printf("[FAIL] Interrupt triggered but wrong cause: 0x%x\n", trap_cause_val);
+            printf("[FAIL] Interrupt triggered but wrong cause: 0x%x (expected 0x80000007)\n", trap_cause_val);
         }
     }
 }
@@ -816,6 +863,8 @@ int main() {
             shell_test_csr(arg);
         } else if (str_equals(cmd, "test-irq")) {
             shell_test_irq(arg);
+        } else if (str_equals(cmd, "test-mtime")) {
+            shell_test_mtime(arg);
         } else if (str_equals(cmd, "blink")) {
             shell_blink(arg);
         } else if (str_equals(cmd, "sdcard_rd")) {
