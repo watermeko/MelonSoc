@@ -23,6 +23,7 @@ _C_SOURCES = program/utils/print.c \
              program/drivers/spi.c \
              program/drivers/sdcard.c \
              program/app/raystones.c \
+             program/app/test_csr.c \
              program/drivers/ddr.c
 LINKER_SCRIPT = program/boot/linker_pipeline.ld      
 
@@ -48,7 +49,7 @@ else
 endif
 
 # CPU supports RV32I + M + C (RVC is decompressed in the frontend).
-ARCH_FLAGS = -march=rv32imc -mabi=ilp32
+ARCH_FLAGS = -march=rv32imc_zicsr -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)

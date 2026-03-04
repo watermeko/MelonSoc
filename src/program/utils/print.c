@@ -7,6 +7,7 @@
 #include "sdcard.h"
 #include "timer.h"
 #include "ddr.h"
+#include "test_csr.h"
 
 void raystones_run(void);
 
@@ -132,6 +133,8 @@ static void shell_help(void) {
     puts("  ddr probe|rd|wr    - access DDR via DDR3 APP MMIO");
     puts("  raystones          - run the raystones benchmark");
     puts("  test-m             - test M extension (multiply/divide)");
+    puts("  test-csr           - test CSRs and trap handling");
+    puts("  test-irq           - test asynchronous hardware interrupts");
 }
 
 static void shell_set_leds(const char *arg) {
@@ -179,6 +182,130 @@ static void shell_run_raystones(const char *arg) {
         return;
     }
     raystones_run();
+}
+
+static void shell_test_irq(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: test-irq");
+        return;
+    }
+
+    printf("--- Timer Interrupt Test Start ---\n");
+
+    uint32_t trap_addr = (uint32_t)&trap_handler;
+    asm volatile("csrw mtvec, %0" :: "r"(trap_addr));
+    
+    trap_hit_flag = 0;
+    trap_cause_val = 0;
+
+    asm volatile("csrs mie, %0" :: "r"(1 << 7));
+
+    uint32_t current_time = timer_get_count();
+    *timer_cmp_reg() = current_time + 50000;
+    *timer_ctrl_reg() = TIMER_CTRL_EN | TIMER_CTRL_ARMED | TIMER_CTRL_IRQ_EN;
+
+    asm volatile("csrs mstatus, %0" :: "r"(1 << 3));
+
+    printf("Waiting for timer interrupt...\n");
+
+    int timeout = 0;
+    while (!trap_hit_flag) {
+        timeout++;
+        if (timeout > 1000000) {
+            printf("[FAIL] Timeout waiting for interrupt.\n");
+            break;
+        }
+    }
+
+    asm volatile("csrc mstatus, %0" :: "r"(1 << 3));
+    asm volatile("csrc mie, %0" :: "r"(1 << 7));
+
+    if (trap_hit_flag) {
+        if (trap_cause_val == 0x80000007) {
+            printf("[OK] Timer interrupt correctly triggered and handled.\n");
+            printf("--- IRQ TEST PASSED! ---\n");
+        } else {
+            printf("[FAIL] Interrupt triggered but wrong cause: 0x%x\n", trap_cause_val);
+        }
+    }
+}
+
+static void shell_test_csr(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: test-csr");
+        return;
+    }
+
+    printf("--- CSR Read/Write Test Start ---\n");
+    int test_pass = 1;
+    uint32_t read_val;
+
+    uint32_t test_val_1 = 0xDEADBEEF;
+    write_mscratch(test_val_1);
+    read_val = read_mscratch();
+    
+    if (read_val == test_val_1) {
+        printf("[OK] mscratch RW test passed (0x%x).\n", read_val);
+    } else {
+        printf("[FAIL] mscratch RW test failed. Expected: 0x%x, Got: 0x%x\n", test_val_1, read_val);
+        test_pass = 0;
+    }
+
+    uint32_t test_val_2 = 0x80000003;
+    asm volatile("csrw mtvec, %0" :: "r"(test_val_2));
+    read_val = read_mtvec();
+    
+    uint32_t expected_mtvec = 0x80000000;
+    if (read_val == expected_mtvec) {
+        printf("[OK] mtvec alignment test passed (0x%x).\n", read_val);
+    } else {
+        printf("[FAIL] mtvec alignment test failed. Expected: 0x%x, Got: 0x%x\n", expected_mtvec, read_val);
+        test_pass = 0;
+    }
+
+    asm volatile("csrw mscratch, %0" :: "r"(0x00000000));
+    asm volatile("csrs mscratch, %0" :: "r"(0x00000110));
+    read_val = read_mscratch();
+    if (read_val == 0x00000110) {
+        printf("[OK] mscratch CSRS (Set) test passed.\n");
+    } else {
+        printf("[FAIL] mscratch CSRS test failed. Got: 0x%x\n", read_val);
+        test_pass = 0;
+    }
+
+    asm volatile("csrc mscratch, %0" :: "r"(0x00000010));
+    read_val = read_mscratch();
+    if (read_val == 0x00000100) {
+        printf("[OK] mscratch CSRC (Clear) test passed.\n");
+    } else {
+        printf("[FAIL] mscratch CSRC test failed. Got: 0x%x\n", read_val);
+        test_pass = 0;
+    }
+    if (test_pass) {
+        printf("--- ALL TESTS PASSED! ---\n");
+    } else {
+        printf("--- SOME TESTS FAILED! ---\n");
+    }
+
+    puts("");
+
+    printf("--- Trap (ECALL/MRET) Test Start ---\n");
+    uint32_t trap_addr = (uint32_t)&trap_handler;
+    asm volatile("csrw mtvec, %0" :: "r"(trap_addr));
+    
+    trap_hit_flag = 0;
+    trap_cause_val = 0;
+    
+    printf("[INFO] mtvec set to 0x%x\n", trap_addr);
+    printf("[INFO] Executing ECALL...\n");
+    asm volatile("ecall");
+    printf("[INFO] Returned from ECALL!\n");
+    if (trap_hit_flag == 1 && trap_cause_val == 11) {
+        printf("--- ECALL TRAP TEST PASSED! ---\n");
+    } else {
+        printf("--- ECALL TRAP TEST FAILED! flag=%d, cause=%d ---\n", 
+               trap_hit_flag, trap_cause_val);
+    }
 }
 
 static void shell_test_m(const char *arg) {
@@ -685,6 +812,10 @@ int main() {
             shell_run_raystones(arg);
         } else if (str_equals(cmd, "test-m")) {
             shell_test_m(arg);
+        } else if (str_equals(cmd, "test-csr")) {
+            shell_test_csr(arg);
+        } else if (str_equals(cmd, "test-irq")) {
+            shell_test_irq(arg);
         } else if (str_equals(cmd, "blink")) {
             shell_blink(arg);
         } else if (str_equals(cmd, "sdcard_rd")) {

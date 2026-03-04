@@ -55,6 +55,9 @@ module SOC (
     cpu u_cpu (
             .clk(clk),
             .rst_n(rst_n),
+            .ext_irq(1'b0),
+            .sw_irq(1'b0),
+            .timer_irq(timer_irq),
             .instr(instr_bus),
             .data(cpu_data_bus)
         );
@@ -202,9 +205,12 @@ module SOC (
                  .scl(i2c_scl)
              );
 
+    
+    logic timer_irq;
     timer_mmio u_timer_mmio (
                    .clk(clk),
                    .rst_n(rst_n),
+                   .timer_irq(timer_irq),
                    .bus(mmio_timer_bus)
                );
 

@@ -5,6 +5,9 @@
 module cpu (
         input  logic clk,
         input  logic rst_n,
+        input logic ext_irq,
+        input logic sw_irq,
+        input  logic timer_irq,
         imem_if.master instr,
         simple_bus_if.master data
     );
@@ -13,6 +16,21 @@ module cpu (
     // ---------------------- CSR 寄存器 ----------------------
     logic [63:0] csr_cycle;
     logic [63:0] csr_instret;
+
+    logic [31:0] csr_mstatus; // 机器状态 (bit 3: MIE 全局中断使能, bit 7: MPIE 历史中断使能)
+    logic [31:0] csr_mie;     // 中断使能寄存器 (bit 11: MEIE, bit 7: MTIE, bit 3: MSIE)
+    logic [31:0] csr_mip;     // 中断等待寄存器
+    logic [31:0] csr_mtvec;   // 异常入口地址
+    logic [31:0] csr_mscratch; // 机器模式下的临时寄存器，异常处理程序可用来保存上下文
+    logic [31:0] csr_mepc;    // 异常断点返回地址
+    logic [31:0] csr_mcause;  // 异常原因 (最高位 1 代表中断，低位代表中断号)
+
+    always_comb begin
+        csr_mip = 32'b0;
+        csr_mip[11] = ext_irq;
+        csr_mip[7]  = timer_irq;
+        csr_mip[3]  = sw_irq;
+    end
 
     // ---------------------- 通用寄存器堆 ----------------------
     logic [31:0] reg_bank [0:31];
@@ -40,9 +58,7 @@ module cpu (
     logic [31:0] div_result_r;
 
     // ---------------------- IF 阶段 ----------------------
-    // pc_f 是“按 32-bit word 取指”的指针，不是架构 PC：
-    // - 它永远 +4，因为指令存储按 32-bit word 读取（更利于 ROM/BRAM 结构）。
-    // - RVC 的 16/32-bit 变长边界由后续的 halfword IBUF 与 pc_i 来处理。
+    // MARK: IF
     logic [31:0] pc_f;
     logic        if_valid; 
     logic [31:0] if_pc;    
@@ -58,6 +74,7 @@ module cpu (
     logic        fetch_req;
 
     // ---------------------- ID 阶段 ----------------------
+    // MARK: ID
     // PROGROM 的读数据在组合路径里不能反向影响自身控制/地址，否则无法推断为BSRAM
     logic        id_valid;
     logic [31:0] id_pc;
@@ -73,7 +90,8 @@ module cpu (
     logic [31:0] Uimm_d, Iimm_d, Simm_d, Bimm_d, Jimm_d;
 
     logic isALUreg_d, isALUimm_d, isBranch_d, isJALR_d, isJAL_d, isAUIPC_d, isLUI_d;
-    logic isLoad_d, isStore_d, isSYSTEM_d, isEBREAK_d, isCSRRS_d;
+    logic isLoad_d, isStore_d;
+    logic isSYSTEM_d, isMRET_d, isEBREAK_d, isCSRRC_d, isCSRRW_d, isCSRRS_d, isECALL_d;
     logic isMUL_d, isDIV_d;
 
     logic uses_rs1_d, uses_rs2_d;
@@ -100,15 +118,18 @@ module cpu (
         isStore_d  = id_valid && (opcode_d == 7'b0100011);
         isSYSTEM_d = id_valid && (opcode_d == 7'b1110011);
 
-        // M 扩展
         isMUL_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b0);
         isDIV_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b1);
 
-        // SYSTEM
-        isEBREAK_d = isSYSTEM_d && (funct3_d == 3'b000);
-        isCSRRS_d  = isSYSTEM_d && (funct3_d == 3'b010);
 
-        // 寄存器使用情况
+        isCSRRW_d = isSYSTEM_d && (funct3_d == 3'b001);
+        isCSRRS_d = isSYSTEM_d && (funct3_d == 3'b010);
+        isCSRRC_d = isSYSTEM_d && (funct3_d == 3'b011);
+        isMRET_d  = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h302);
+        isEBREAK_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h001);
+
+        isECALL_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h000);
+
         uses_rs1_d = isALUreg_d || isALUimm_d || isBranch_d || isJALR_d || isLoad_d || isStore_d || isMUL_d || isDIV_d;
         uses_rs2_d = isALUreg_d || isBranch_d || isStore_d || isMUL_d || isDIV_d;
 
@@ -144,10 +165,12 @@ module cpu (
     logic [31:0] id_ex_rs1_val, id_ex_rs2_val;
     logic [31:0] id_ex_Uimm, id_ex_Iimm, id_ex_Simm, id_ex_Bimm, id_ex_Jimm;
     logic        id_ex_isALUreg, id_ex_isALUimm, id_ex_isBranch, id_ex_isJALR, id_ex_isJAL;
-    logic        id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore, id_ex_isCSRRS, id_ex_isEBREAK;
+    logic        id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore;
+    logic        id_ex_isCSRRS, id_ex_isCSRRC, id_ex_isCSRRW, id_ex_isMRET, id_ex_isEBREAK, id_ex_isECALL;
     logic        id_ex_isMUL, id_ex_isDIV;
 
     // ---------------------- EX 阶段（带前递/旁路） ----------------------
+    // MARK:EX
     logic [31:0] ex_rs1, ex_rs2;
 
     logic ex_redirect;
@@ -195,6 +218,7 @@ module cpu (
     logic [31:0] mem_wb_wb_value;
 
     // ---------------------- 写回（WB）阶段 ----------------------
+    // MARK:WB
     logic [31:0] wb_load_data;
     logic [31:0] wb_value;
     logic        wb_we;
@@ -218,7 +242,6 @@ module cpu (
             end
         end
 
-        // 除法停顿：除法运行期间，或 DIV 指令刚进入 EX 但结果尚未有效时，停住流水线
         if (div_busy || (id_ex_isDIV && id_ex_valid && !div_result_valid)) begin
             stall_div = 1'b1;
         end
@@ -227,9 +250,6 @@ module cpu (
     end
 
     // ---------------------- 前端取指节流 ----------------------
-    // 决定是否发起读指令请求
-    // IBUF 以 halfword(16-bit) 计数；每次取回一个 32-bit word 会追加 2 个 halfword。
-    // 这里为“在途”的 word 预留空间（IF->F2 和 F2->IBUF），避免 IBUF 溢出，同时尽量保持取指连续。
     assign halt_now = (!halted && id_ex_valid && id_ex_isEBREAK);
     always_comb begin
         int pending_hw;
@@ -266,13 +286,132 @@ module cpu (
         end
     end
 
-    // ---------------------- CSR 读（仅 cycle/instret 计数器） ----------------------
+    // ---------------------- CSR 读----------------------
+    logic [11:0] ex_csr_addr;
     always_comb begin
-        ex_csr_rdata =
-            ( id_ex_instr[27] & id_ex_instr[21]) ? csr_instret[63:32] :
-            (~id_ex_instr[27] & id_ex_instr[21]) ? csr_instret[31:0]  :
-            id_ex_instr[27]               ? csr_cycle[63:32]   :
-            csr_cycle[31:0];
+        ex_csr_addr = id_ex_instr[31:20];
+
+        case (ex_csr_addr)
+            12'hc00: ex_csr_rdata = csr_cycle[31:0];
+            12'hc80: ex_csr_rdata = csr_cycle[63:32];
+            12'hc02: ex_csr_rdata = csr_instret[31:0];
+            12'hc82: ex_csr_rdata = csr_instret[63:32];
+            12'h300: ex_csr_rdata = csr_mstatus;
+            12'h304: ex_csr_rdata = csr_mie;
+            12'h305: ex_csr_rdata = csr_mtvec;
+            12'h340: ex_csr_rdata = csr_mscratch;
+            12'h341: ex_csr_rdata = csr_mepc;
+            12'h342: ex_csr_rdata = csr_mcause;
+            12'h344: ex_csr_rdata = csr_mip;
+            default: ex_csr_rdata = 32'b0;
+        endcase
+    end
+    
+    // ------------------------ CSR 写 ----------------------
+    logic [31:0] ex_csr_wdata;
+    logic [31:0] ex_csr_op_a;
+    logic        ex_csr_we;
+    // funct3[2] 为 1 时，使用的是 5-bit 无符号立即数 (zimm = rs1_d)
+    assign ex_csr_op_a = id_ex_funct3[2] ? {27'b0, id_ex_rs1} : ex_rs1;
+    always_comb begin
+        case (id_ex_funct3[1:0])
+            2'b01: ex_csr_wdata = ex_csr_op_a;                 // CSRRW 直接写入
+            2'b10: ex_csr_wdata = ex_csr_rdata | ex_csr_op_a;  // CSRRS 按位置 1
+            2'b11: ex_csr_wdata = ex_csr_rdata & ~ex_csr_op_a; // CSRRC 按位清 0
+            default: ex_csr_wdata = ex_csr_op_a;
+        endcase
+    end
+
+    always_comb begin
+        ex_csr_we = 1'b0;
+        if (id_ex_valid && !halted) begin
+            if (id_ex_isCSRRW) begin
+                ex_csr_we = 1'b1;
+            end else if ((id_ex_isCSRRS || id_ex_isCSRRC) && (id_ex_rs1 != 5'd0)) begin
+                // RISC-V 规定：对于 RS 和 RC，如果 rs1（或 zimm）为 0，则是纯读操作
+                ex_csr_we = 1'b1; 
+            end
+        end
+    end
+
+    // ---------------------- 异常与中断判断 ----------------------
+    logic trap_req;
+    logic [31:0] trap_cause;
+
+    // 全局中断使能
+    wire mstatus_mie = csr_mstatus[3]; 
+    // 有效的中断请求 = 等待中(mip) & 软件允许(mie)
+    wire [31:0] active_irq = csr_mip & csr_mie;
+
+    always_comb begin
+        trap_req = 1'b0;
+        trap_cause = 32'b0;
+
+        // 硬件中断
+        if (mstatus_mie && id_ex_valid && !halt_now) begin
+            if (active_irq[11]) begin // 外部中断 (MEIP)
+                trap_req = 1'b1;
+                trap_cause = 32'h8000_000B; // 最高位为1表示中断，异常码 11
+            end else if (active_irq[3]) begin // 软件中断 (MSIP)
+                trap_req = 1'b1;
+                trap_cause = 32'h8000_0003; 
+            end else if (active_irq[7]) begin // 定时器中断 (MTIP)
+                trap_req = 1'b1;
+                trap_cause = 32'h8000_0007;
+            end
+        end
+
+        // 软件trap
+        if (!trap_req && id_ex_valid) begin
+            if (id_ex_isECALL) begin
+                trap_req = 1'b1;
+                trap_cause = 32'd11; // Machine ECALL
+            end else if (id_ex_isEBREAK) begin
+                trap_req = 1'b1;
+                trap_cause = 32'd3;  // Breakpoint
+            end
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            csr_mstatus  <= 32'b0;
+            csr_mtvec    <= 32'b0;
+            csr_mepc     <= 32'b0;
+            csr_mcause   <= 32'b0;
+            csr_mscratch <= 32'b0;
+            csr_mie      <= 32'b0;
+            // csr_mip      <= 32'b0;
+        end else begin
+            if (trap_req) begin
+                // 保存现场
+                csr_mepc   <= id_ex_pc;    // 把当前出问题的指令 PC 保存下来
+                csr_mcause <= trap_cause;  // 记录是什么原因
+
+                // mstatus 逻辑：MPIE 保存 MIE 的旧值，MIE 置零（关闭全局中断）
+                csr_mstatus[7] <= csr_mstatus[3]; 
+                csr_mstatus[3] <= 1'b0;
+            end 
+            else if (id_ex_valid && id_ex_isMRET) begin
+                // 恢复现场
+                // MIE 恢复为 MPIE 的旧值，MPIE 置一
+                csr_mstatus[3] <= csr_mstatus[7];
+                csr_mstatus[7] <= 1'b1;
+            end 
+            else if (ex_csr_we) begin
+                case (ex_csr_addr)
+                    12'h300: csr_mstatus  <= ex_csr_wdata;
+                    12'h304: csr_mie      <= ex_csr_wdata;
+                    12'h305: csr_mtvec    <= {ex_csr_wdata[31:2], 2'b00};
+                    12'h340: csr_mscratch <= ex_csr_wdata;
+                    12'h341: csr_mepc     <= {ex_csr_wdata[31:2], 2'b00};
+                    12'h342: csr_mcause   <= ex_csr_wdata;
+                    // ! IMPORTANT
+                    // 注意：真实实现中，mstatus、mie 等有些位是只读（Hardwired to 0）的。
+                    // 为了简化，目前允许全写。日后可加掩码，例如：csr_mstatus <= ex_csr_wdata & 32'h0000_1888;
+                endcase
+            end
+        end
     end
 
     // ---------------------- EX 阶段组合逻辑 ----------------------
@@ -281,7 +420,6 @@ module cpu (
         logic is_sub;
         logic mem_byteAccess, mem_halfwordAccess;
 
-        // 乘法
         logic [63:0] mul_result;
         logic [63:0] mul_signed_result;
         logic [63:0] mul_mixed_result;
@@ -293,7 +431,6 @@ module cpu (
         mem_byteAccess     = 1'b0;
         mem_halfwordAccess = 1'b0;
 
-        // 初始化乘法中间结果，避免综合出锁存器
         mul_result = 64'b0;
         mul_signed_result = 64'b0;
         mul_mixed_result = 64'b0;
@@ -303,7 +440,6 @@ module cpu (
         op2_signed = 64'b0;
         op2_mixed = 64'b0;
 
-        // 默认值
         ex_alu_in2   = 32'b0;
         ex_alu_out   = 32'b0;
 
@@ -329,7 +465,6 @@ module cpu (
         ex_redirect_pc = 32'b0;
         ex_jalr_sum    = 32'b0;
 
-        // ALU 运算（R/I 类）
         if (id_ex_isALUreg || id_ex_isALUimm) begin
             shamt  = id_ex_isALUreg ? ex_rs2[4:0] : id_ex_instr[24:20];
             is_sub = id_ex_isALUreg && id_ex_funct7[5];
@@ -361,7 +496,6 @@ module cpu (
                    endcase
                end
 
-               // 分支比较使用 rs1/rs2
                if (id_ex_isBranch) begin
                    ex_eq  = (ex_rs1 == ex_rs2);
                    ex_ltu = (ex_rs1 < ex_rs2);
@@ -385,7 +519,6 @@ module cpu (
                           endcase
                       end
 
-                      // Store 数据与字节使能格式化
                       if (id_ex_isStore) begin
                           mem_byteAccess     = (id_ex_funct3[1:0] == 2'b00);
                           mem_halfwordAccess = (id_ex_funct3[1:0] == 2'b01);
@@ -404,18 +537,14 @@ module cpu (
                               4'b1111;
                       end
 
-                      // 写回选择（load 的数据要到 WB 阶段才会从 data.rdata 格式化得到）
                       if (id_ex_valid) begin
                           if (id_ex_isMUL) begin
-                              // 乘法实现
-                              // 先扩展操作数到 64 位
                               op1_unsigned = {32'b0, ex_rs1};
                               op2_unsigned = {32'b0, ex_rs2};
                               op1_signed = {{32{ex_rs1[31]}}, ex_rs1};
                               op2_signed = {{32{ex_rs2[31]}}, ex_rs2};
                               op2_mixed = {32'b0, ex_rs2};
 
-                              // 执行乘法
                               mul_result = op1_unsigned * op2_unsigned;
                               mul_signed_result = op1_signed * op2_signed;
                               mul_mixed_result = op1_signed * op2_mixed;
@@ -431,9 +560,8 @@ module cpu (
                               ex_wb_value = ex_alu_out;
                           end
                           else if (id_ex_isDIV && div_result_valid) begin
-                              // 除法结果写回
                               ex_wb_en = 1'b1;
-                              ex_wb_value = id_ex_funct3[1] ? div_result_r : div_result_q;  // REM 或 DIV
+                              ex_wb_value = id_ex_funct3[1] ? div_result_r : div_result_q; 
                           end
                           else if (id_ex_isJAL || id_ex_isJALR) begin
                               ex_wb_en    = 1'b1;
@@ -447,7 +575,7 @@ module cpu (
                               ex_wb_en    = 1'b1;
                               ex_wb_value = ex_pc_plus_uimm;
                           end
-                          else if (id_ex_isCSRRS) begin
+                          else if (id_ex_isCSRRS || id_ex_isCSRRC || id_ex_isCSRRW) begin
                               ex_wb_en    = 1'b1;
                               ex_wb_value = ex_csr_rdata;
                           end
@@ -457,17 +585,36 @@ module cpu (
                           end
                       end
 
-                      // 控制流转移在 EX 阶段决策（分支是否跳转、JAL/JALR 目标地址）
-                      ex_redirect =
-                          id_ex_valid && ((id_ex_isBranch && ex_take_branch) || id_ex_isJALR || id_ex_isJAL);
+                      ex_jalr_sum = ex_rs1 + id_ex_Iimm;
 
-        ex_jalr_sum = ex_rs1 + id_ex_Iimm;
+                      ex_redirect = 1'b0;
+                      ex_redirect_pc = 32'b0;
 
-        ex_redirect_pc =
-            (id_ex_isBranch && ex_take_branch) ? ex_pc_plus_bimm :
-            id_ex_isJALR ? { ex_jalr_sum[31:1], 1'b0 } :
-            id_ex_isJAL  ? ex_pc_plus_jimm :
-            32'b0;
+                      // Trap
+                      if (trap_req) begin
+                          ex_redirect = 1'b1;
+                          ex_redirect_pc = {csr_mtvec[31:2], 2'b00}; 
+
+                          ex_wb_en = 1'b0;
+                          ex_store_wmask = 4'b0000;
+                      end 
+                      // mret
+                      else if (id_ex_valid && id_ex_isMRET) begin
+                          ex_redirect = 1'b1;
+                          ex_redirect_pc = csr_mepc;
+                      end
+                      else if (id_ex_valid) begin
+                          if (id_ex_isBranch && ex_take_branch) begin
+                              ex_redirect = 1'b1;
+                              ex_redirect_pc = ex_pc_plus_bimm;
+                          end else if (id_ex_isJALR) begin
+                              ex_redirect = 1'b1;
+                              ex_redirect_pc = { ex_jalr_sum[31:1], 1'b0 };
+                          end else if (id_ex_isJAL) begin
+                              ex_redirect = 1'b1;
+                              ex_redirect_pc = ex_pc_plus_jimm;
+                          end
+                      end
     end
 
     // ---------------------- WB 阶段加载数据格式化 ----------------------
@@ -497,8 +644,6 @@ module cpu (
 
     // ---------------------- 总线驱动 ----------------------
     always_comb begin
-        // - 不要让 ROM 读数据在组合路径里反向影响 ROM 的控制/地址。
-        // - 只把 instr.rdata 捕获进寄存器（f2_word），后续逻辑只基于 f2_word 工作。
         instr.addr = pc_f;
         instr.ren  = !halted;
 
@@ -539,14 +684,12 @@ module cpu (
 
             {csr_cycle, csr_instret} <= '0;
 
-            // 需要非 0 默认值的字段单独覆盖
             id_len    <= 32'd4;
             id_ex_len <= 32'd4;
         end
         else begin
             csr_cycle <= csr_cycle + 64'd1;
 
-            // 已推出指令计数
             if (!halted) begin
                 if (wb_we) begin
                     reg_bank[mem_wb_rd] <= wb_value;
@@ -584,8 +727,6 @@ module cpu (
                     drop_n     = ex_redirect ? ex_redirect_pc[1] : 1'b0;
                 end
                 else begin
-                    // 追加已捕获的 32-bit word（F2 阶段）到 IBUF。
-                    // 注意：instr.rdata 只会被写入 f2_word；不直接在组合逻辑里使用 instr.rdata。
                     if (f2_valid) begin
                         ibuf_n[16*ibuf_cnt_n +: 16] = f2_word[15:0];
                         ibuf_n[16*(ibuf_cnt_n + 1) +: 16] = f2_word[31:16];
@@ -600,11 +741,10 @@ module cpu (
                     end
                 end
 
-                // 当没有 stall 时，从 IBUF 发射一条指令进入 ID（支持 RVC：hw0[1:0]!=2'b11 则为 16-bit）。
                 if (halt_now || ex_redirect) begin
                     id_valid <= 1'b0;
                     id_pc    <= 32'b0;
-                    id_instr <= 32'h0000_0013; // NOP（addi x0,x0,0）
+                    id_instr <= 32'h0000_0013; // NOP
                     id_len   <= 32'd4;
                 end
                 else if (!stall_any) begin
@@ -629,7 +769,6 @@ module cpu (
                         id_instr <= inst32;
                         id_len   <= is_rvc ? 32'd2 : 32'd4;
 
-                        // 弹出已消耗的 halfword，并按指令长度推进架构 PC（RVC +2，否则 +4）。
                         ibuf_n = ibuf_n >> (16 * inst_hw_len);
                         ibuf_cnt_n = ibuf_cnt_n - inst_hw_len;
                         pc_i_n = pc_i_n + (is_rvc ? 32'd2 : 32'd4);
@@ -647,7 +786,6 @@ module cpu (
                 pc_i          <= pc_i_n;
                 drop_halfword <= drop_n;
 
-                // 通过 f2_word 打一拍，避免组合路径使用 instr.rdata。
                 if (halt_now || ex_redirect) begin
                     f2_valid <= 1'b0;
                     f2_word  <= 32'b0;
@@ -683,7 +821,7 @@ module cpu (
 
             // ID/EX 更新：
             // - flush（redirect/halt）或 load-use stall 时插入 bubble（id_ex_valid=0）。
-            // - 除法 stall 时不更新 ID/EX（把 DIV 指令“钉住”在 EX，等待 div_result_valid）。
+            // - 除法 stall 时不更新 ID/EX
             if (!halted) begin
                 if (halt_now || ex_redirect || stall_load_use) begin
                     id_ex_valid <= 1'b0;
@@ -715,7 +853,11 @@ module cpu (
                     id_ex_isLoad   <= isLoad_d;
                     id_ex_isStore  <= isStore_d;
                     id_ex_isCSRRS  <= isCSRRS_d;
+                    id_ex_isCSRRC  <= isCSRRC_d;
+                    id_ex_isCSRRW  <= isCSRRW_d;
+                    id_ex_isMRET   <= isMRET_d;
                     id_ex_isEBREAK <= isEBREAK_d;
+                    id_ex_isECALL  <= isECALL_d;
                     id_ex_isMUL    <= isMUL_d;
                     id_ex_isDIV    <= isDIV_d;
                 end

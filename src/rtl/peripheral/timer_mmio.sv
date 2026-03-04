@@ -5,6 +5,7 @@ module timer_mmio
     (
         input  logic clk,
         input  logic rst_n,
+        output logic timer_irq,
         simple_bus_if.slave bus
     );
     import soc_pkg::*;
@@ -190,5 +191,8 @@ module timer_mmio
             bus.rdata[0] = pending;
         end
     end
+    
+    assign timer_irq = pending & ctrl_irq_en;
+
 endmodule
 
