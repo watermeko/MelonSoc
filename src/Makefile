@@ -6,6 +6,24 @@ SIZE = $(CROSS_COMPILE)size
 HOST_CC = gcc
 HOST_CXX ?= g++
 
+KCONFIG_FILE    = Kconfig
+KCONFIG_CONFIG ?= .config
+AUTOCONF_H      = $(BUILD_DIR)/include/autoconf.h
+
+KCONFIGLIB_DIR  = /usr/lib/python3/dist-packages
+KCONFIG_ALLDEF  = python3 $(KCONFIGLIB_DIR)/alldefconfig.py
+KCONFIG_GEN     = python3 $(KCONFIGLIB_DIR)/genconfig.py
+KCONFIG_MENU    = python3 $(KCONFIGLIB_DIR)/menuconfig.py
+KCONFIG_GUI     = python3 $(KCONFIGLIB_DIR)/guiconfig.py
+
+-include $(KCONFIG_CONFIG)
+
+CONFIG_APP_TEST_M     ?= y
+CONFIG_APP_TEST_CSR   ?= y
+CONFIG_APP_TEST_IRQ   ?= y
+CONFIG_APP_TEST_MSIP  ?= y
+CONFIG_APP_TEST_MTIME ?= y
+
 RTL_DIR = rtl
 SIM_DIR = sim
 RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv top.v)
@@ -14,8 +32,9 @@ SIM_CPP_ABS = $(abspath $(SIM_CPP))
 SIM_ARGS ?=
 
 TARGET_NAME = program
-_S = program/boot/$(TARGET_NAME).s       
+_S = program/boot/$(TARGET_NAME).s
 _C_SOURCES = program/utils/print.c \
+             program/app/main.c \
              program/drivers/uart.c \
              program/drivers/gpio.c \
              program/drivers/i2c.c \
@@ -23,8 +42,6 @@ _C_SOURCES = program/utils/print.c \
              program/drivers/spi.c \
              program/drivers/sdcard.c \
              program/app/raystones.c \
-             program/app/test_csr.c \
-             program/app/test_msip.c \
              program/app/test_rtos.c \
              program/drivers/ddr.c \
              program/FreeRTOS/list.c \
@@ -32,6 +49,14 @@ _C_SOURCES = program/utils/print.c \
              program/FreeRTOS/tasks.c \
              program/FreeRTOS/portable/MemMang/heap_4.c \
              program/FreeRTOS/portable/GCC/RISC-V/port.c
+
+ifneq ($(filter y,$(CONFIG_APP_TEST_CSR) $(CONFIG_APP_TEST_IRQ) $(CONFIG_APP_TEST_MTIME) $(CONFIG_APP_TEST_MSIP)),)
+_C_SOURCES += program/app/test_csr.c
+endif
+
+ifeq ($(CONFIG_APP_TEST_MSIP),y)
+_C_SOURCES += program/app/test_msip.c
+endif
 
 _S_UPPER_SOURCES = program/FreeRTOS/portable/GCC/RISC-V/portASM.S
 LINKER_SCRIPT = program/boot/linker_pipeline.ld      
@@ -69,21 +94,44 @@ FREERTOS_INCLUDE = \
     -Iprogram/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions
 
 CFLAGS_S = $(CFLAGS_COMMON)
-CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions -ffunction-sections -fdata-sections -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/boot $(FREERTOS_INCLUDE)
+CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions \
+           -ffunction-sections -fdata-sections \
+           -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/boot \
+           -I$(BUILD_DIR)/include \
+           $(FREERTOS_INCLUDE)
 
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
 
-.PHONY: all build clean dirs simulate simulate_verilator
+.PHONY: all build clean dirs simulate menuconfig guiconfig defconfig
 
-all: 
-	@echo "Must select a target" 
+all:
+	@echo "Must select a target"
 
 dirs:
-	@echo "Ensuring build directory $(BUILD_DIR) exists..."
 	@mkdir -p $(BUILD_DIR)
 
-build: $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX)
+$(KCONFIG_CONFIG):
+	@echo "No .config found — generating defaults..."
+	$(KCONFIG_ALLDEF) $(KCONFIG_FILE)
+
+$(AUTOCONF_H): $(KCONFIG_CONFIG) | dirs
+	@mkdir -p $(dir $(AUTOCONF_H))
+	$(KCONFIG_GEN) --header-path $(AUTOCONF_H) $(KCONFIG_FILE)
+
+menuconfig: $(KCONFIG_CONFIG)
+	$(KCONFIG_MENU) $(KCONFIG_FILE)
+	@$(MAKE) $(AUTOCONF_H)
+
+guiconfig: $(KCONFIG_CONFIG)
+	$(KCONFIG_GUI) $(KCONFIG_FILE)
+	@$(MAKE) $(AUTOCONF_H)
+
+defconfig:
+	$(KCONFIG_ALLDEF) $(KCONFIG_FILE)
+	@$(MAKE) $(AUTOCONF_H)
+
+build: $(AUTOCONF_H) $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX)
 	@echo "Build complete!"
 	@echo "  PROGROM: $(TARGET_PROGROM_HEX)"
 	@echo "  DATARAM: $(TARGET_DATARAM_HEX)"
@@ -92,17 +140,11 @@ $(BIN2HEX_EXECUTABLE): $(BIN2HEX_C_SRC) | dirs
 	@echo "Compiling host utility: $< -> $@"
 	$(HOST_CC) $< -o $@
 
-# $(TARGET_ELF): $(_S) $(LINKER_SCRIPT) | dirs # 旧的 ELF 生成规则
-# 	@echo "Compiling and Linking $(_S) to $@"
-# 	$(CC) $(CFLAGS_S) $(LDFLAGS) $(_S) -o $@
-
-# 从 C 和汇编源文件派生的目标文件
 _C_OBJS = $(patsubst program/%.c,$(BUILD_DIR)/%.o,$(_C_SOURCES))
 _S_OBJS = $(patsubst program/%.s,$(BUILD_DIR)/%.o,$(_S))
 _S_UPPER_OBJS = $(patsubst program/%.S,$(BUILD_DIR)/%.o,$(_S_UPPER_SOURCES))
 OBJS = $(_C_OBJS) $(_S_OBJS) $(_S_UPPER_OBJS)
 
-# 将目标文件链接到最终 ELF 可执行文件的规则
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "Linking object files to $@"
 	$(CC) $(ARCH_FLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
@@ -133,13 +175,11 @@ $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "========================================"
 	@echo ""
 
-# 将 C 源文件编译为目标文件的规则
-$(BUILD_DIR)/%.o: program/%.c | dirs
+$(BUILD_DIR)/%.o: program/%.c $(AUTOCONF_H) | dirs
 	@mkdir -p $(dir $@)
 	@echo "Compiling C source: $< -> $@"
 	$(CC) $(CFLAGS_C) -c $< -o $@
 
-# 将汇编源文件汇编为目标文件的规则
 $(BUILD_DIR)/%.o: program/%.s | dirs
 	@mkdir -p $(dir $@)
 	@echo "Assembling: $< -> $@"

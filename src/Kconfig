@@ -1,0 +1,25 @@
+mainmenu "MelonSoc Configuration"
+
+menu "Test Commands"
+
+config APP_TEST_M
+	bool "Enable test-m (M extension: multiply/divide)"
+	default y
+
+config APP_TEST_CSR
+	bool "Enable test-csr (CSR read/write and ECALL trap)"
+	default y
+
+config APP_TEST_IRQ
+	bool "Enable test-irq (timer peripheral interrupt)"
+	default y
+
+config APP_TEST_MSIP
+	bool "Enable test-msip (machine software interrupt)"
+	default y
+
+config APP_TEST_MTIME
+	bool "Enable test-mtime (machine timer interrupt)"
+	default y
+
+endmenu
