@@ -130,7 +130,11 @@ module cpu (
 
         isECALL_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h000);
 
-        uses_rs1_d = isALUreg_d || isALUimm_d || isBranch_d || isJALR_d || isLoad_d || isStore_d || isMUL_d || isDIV_d;
+        // CSR register instructions (CSRRW/CSRRS/CSRRC, funct3[2]=0) use rs1 as write value;
+        // must be included in uses_rs1_d so load-use stalls fire correctly when a load
+        // result feeds a CSR write (e.g. lw t0, 0(sp) followed by csrw mepc, t0).
+        uses_rs1_d = isALUreg_d || isALUimm_d || isBranch_d || isJALR_d || isLoad_d || isStore_d || isMUL_d || isDIV_d
+                     || isCSRRW_d || isCSRRS_d || isCSRRC_d;
         uses_rs2_d = isALUreg_d || isBranch_d || isStore_d || isMUL_d || isDIV_d;
 
         Uimm_d = {instr_d[31], instr_d[30:12], 12'b0};
@@ -404,7 +408,7 @@ module cpu (
                     12'h304: csr_mie      <= ex_csr_wdata;
                     12'h305: csr_mtvec    <= {ex_csr_wdata[31:2], 2'b00};
                     12'h340: csr_mscratch <= ex_csr_wdata;
-                    12'h341: csr_mepc     <= {ex_csr_wdata[31:2], 2'b00};
+                    12'h341: csr_mepc     <= {ex_csr_wdata[31:1], 1'b0};  // RVC: preserve bit[1] for 2-byte alignment
                     12'h342: csr_mcause   <= ex_csr_wdata;
                     // ! IMPORTANT
                     // 注意：真实实现中，mstatus、mie 等有些位是只读（Hardwired to 0）的。
