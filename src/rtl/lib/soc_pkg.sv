@@ -38,6 +38,10 @@
             localparam logic [31:0] IO_MTIMECMP_LO_ADDR = IO_BASE_ADDR + 32'h0000_0068;
             localparam logic [31:0] IO_MTIMECMP_HI_ADDR = IO_BASE_ADDR + 32'h0000_006C;
 
+            // MSIP (Machine Software Interrupt Pending)
+            // 写 1 置位软件中断，写 0 清除；读回当前状态
+            localparam logic [31:0] IO_MSIP_ADDR        = IO_BASE_ADDR + 32'h0000_0070;
+
             // DDR3 APP（参考 ref/src/ddr3_syn_top.v 的 app_* 接口）
             // CTRL   @ IO_DDR_CTRL_ADDR:
             //   [0] START（脉冲触发一次操作）, [1] WRITE（1=写,0=读）

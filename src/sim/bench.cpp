@@ -91,6 +91,7 @@ struct SimArgs {
   bool max_cycles_user = false;
   uint32_t clk_hz = 27'000'000;
   uint32_t uart_baud = 115'200;
+  std::string sim_arg;
 };
 
 static void print_help(const char* argv0) {
@@ -103,6 +104,7 @@ static void print_help(const char* argv0) {
       "  --max-cycles <N>        Stop after N cycles (0 = run forever)\n"
       "  --clk-hz <N>            SOC clk frequency (default: 27000000)\n"
       "  --uart-baud <N>         UART baud (default: 115200)\n"
+      "  --sim-arg <cmd>         Shell command to inject via UART at startup\n"
       "  --help                  Show this help\n",
       argv0);
 }
@@ -123,6 +125,8 @@ static SimArgs parse_args(int argc, char** argv) {
       a.clk_hz = parse_u32(argv[++i], a.clk_hz);
     } else if (arg == "--uart-baud" && i + 1 < argc) {
       a.uart_baud = parse_u32(argv[++i], a.uart_baud);
+    } else if (arg == "--sim-arg" && i + 1 < argc) {
+      a.sim_arg = argv[++i];
     } else {
       std::fprintf(stderr, "Unknown arg: %s\n", arg.c_str());
       print_help(argv[0]);
@@ -214,10 +218,17 @@ int main(int argc, char** argv) {
 
   bool eof_seen = false;
   uint32_t poll_div = 0;
+  bool sim_arg_sent = args.sim_arg.empty();
 
   uint64_t i = 0;
   while (!Verilated::gotFinish()) {
     if (args.max_cycles != 0 && i >= args.max_cycles) break;
+
+    if (!sim_arg_sent && i == 2'000'000) {
+      uart.enqueue_bytes(args.sim_arg);
+      uart.enqueue_byte('\n');
+      sim_arg_sent = true;
+    }
 
     if (args.interactive) {
       // Throttle stdin polling to reduce overhead.

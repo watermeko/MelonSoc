@@ -52,12 +52,13 @@ module SOC (
     simple_bus_if mmio_spi_bus();
     simple_bus_if mmio_ddr_bus();
     simple_bus_if mmio_mtime_bus();
+    simple_bus_if mmio_msip_bus();
 
     cpu u_cpu (
             .clk(clk),
             .rst_n(rst_n),
             .ext_irq(timer_irq),
-            .sw_irq(1'b0),
+            .sw_irq(msip_irq),
             .timer_irq(mtime_irq),
             .instr(instr_bus),
             .data(cpu_data_bus)
@@ -112,6 +113,7 @@ module SOC (
     logic sel_spi;
     logic sel_ddr;
     logic sel_mtime;
+    logic sel_msip;
 
     always_comb begin
         sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
@@ -149,6 +151,8 @@ module SOC (
                   (align_word(mmio_bus.addr) == IO_MTIME_HI_ADDR) ||
                   (align_word(mmio_bus.addr) == IO_MTIMECMP_LO_ADDR) ||
                   (align_word(mmio_bus.addr) == IO_MTIMECMP_HI_ADDR);
+
+        sel_msip  = (align_word(mmio_bus.addr) == IO_MSIP_ADDR);
 
         mmio_gpio_bus.addr  = mmio_bus.addr;
         mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
@@ -191,6 +195,12 @@ module SOC (
         mmio_mtime_bus.wen   = mmio_bus.wen & sel_mtime;
         mmio_mtime_bus.wdata = mmio_bus.wdata;
         mmio_mtime_bus.wstrb = mmio_bus.wstrb;
+
+        mmio_msip_bus.addr  = mmio_bus.addr;
+        mmio_msip_bus.ren   = mmio_bus.ren & sel_msip;
+        mmio_msip_bus.wen   = mmio_bus.wen & sel_msip;
+        mmio_msip_bus.wdata = mmio_bus.wdata;
+        mmio_msip_bus.wstrb = mmio_bus.wstrb;
     end
 
     gpio_mmio #(
@@ -234,6 +244,14 @@ module SOC (
                    .timer_irq(mtime_irq),
                    .bus(mmio_mtime_bus)
                );
+
+    logic msip_irq;
+    msip_mmio u_msip_mmio (
+                  .clk(clk),
+                  .rst_n(rst_n),
+                  .sw_irq(msip_irq),
+                  .bus(mmio_msip_bus)
+              );
 
     spi_mmio u_spi_mmio (
                  .clk(clk),
@@ -288,6 +306,8 @@ module SOC (
                        mmio_rdata_comb = mmio_ddr_bus.rdata;
                    sel_mtime:
                        mmio_rdata_comb = mmio_mtime_bus.rdata;
+                   sel_msip:
+                       mmio_rdata_comb = mmio_msip_bus.rdata;
                    default:
                        mmio_rdata_comb = 32'b0;
                endcase

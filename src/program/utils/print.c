@@ -9,6 +9,8 @@
 #include "mtime.h"
 #include "ddr.h"
 #include "test_csr.h"
+#include "test_msip.h"
+#include "test_rtos.h"
 
 void raystones_run(void);
 
@@ -39,7 +41,7 @@ int puts(const char* s) {
 }
 
 void print_dec(int val) {
-   char buffer[255];
+   char buffer[12];
    char *p = buffer;
    if(val < 0) {
       putchar('-');
@@ -137,6 +139,8 @@ static void shell_help(void) {
     puts("  test-csr           - test CSRs and trap handling");
     puts("  test-irq           - test asynchronous hardware interrupts");
     puts("  test-mtime         - read and display machine timer");
+    puts("  test-msip          - test machine software interrupt (MSIP)");
+    puts("  test-rtos          - run FreeRTOS dual-task print test");
 }
 
 static void shell_set_leds(const char *arg) {
@@ -865,6 +869,10 @@ int main() {
             shell_test_irq(arg);
         } else if (str_equals(cmd, "test-mtime")) {
             shell_test_mtime(arg);
+        } else if (str_equals(cmd, "test-msip")) {
+            shell_test_msip(arg);
+        } else if (str_equals(cmd, "test-rtos")) {
+            shell_test_rtos(arg);
         } else if (str_equals(cmd, "blink")) {
             shell_blink(arg);
         } else if (str_equals(cmd, "sdcard_rd")) {

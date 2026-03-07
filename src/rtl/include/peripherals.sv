@@ -5,3 +5,4 @@
 `include "../peripheral/timer_mmio.sv"
 `include "../peripheral/uart_mmio.sv"
 `include "../peripheral/mtime_mmio.sv"
+`include "../peripheral/msip_mmio.sv"

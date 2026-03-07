@@ -24,7 +24,16 @@ _C_SOURCES = program/utils/print.c \
              program/drivers/sdcard.c \
              program/app/raystones.c \
              program/app/test_csr.c \
-             program/drivers/ddr.c
+             program/app/test_msip.c \
+             program/app/test_rtos.c \
+             program/drivers/ddr.c \
+             program/FreeRTOS/list.c \
+             program/FreeRTOS/queue.c \
+             program/FreeRTOS/tasks.c \
+             program/FreeRTOS/portable/MemMang/heap_4.c \
+             program/FreeRTOS/portable/GCC/RISC-V/port.c
+
+_S_UPPER_SOURCES = program/FreeRTOS/portable/GCC/RISC-V/portASM.S
 LINKER_SCRIPT = program/boot/linker_pipeline.ld      
 
 BIN2HEX_C_SRC = program/tools/bin_to_verilog_hex.c
@@ -53,8 +62,14 @@ ARCH_FLAGS = -march=rv32imc_zicsr -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)
+FREERTOS_INCLUDE = \
+    -Iprogram/FreeRTOS \
+    -Iprogram/FreeRTOS/include \
+    -Iprogram/FreeRTOS/portable/GCC/RISC-V \
+    -Iprogram/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions
+
 CFLAGS_S = $(CFLAGS_COMMON)
-CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions -ffunction-sections -fdata-sections -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/boot # 缩小代码尺寸，用于头文件
+CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions -ffunction-sections -fdata-sections -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/boot $(FREERTOS_INCLUDE)
 
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
@@ -84,7 +99,8 @@ $(BIN2HEX_EXECUTABLE): $(BIN2HEX_C_SRC) | dirs
 # 从 C 和汇编源文件派生的目标文件
 _C_OBJS = $(patsubst program/%.c,$(BUILD_DIR)/%.o,$(_C_SOURCES))
 _S_OBJS = $(patsubst program/%.s,$(BUILD_DIR)/%.o,$(_S))
-OBJS = $(_C_OBJS) $(_S_OBJS)
+_S_UPPER_OBJS = $(patsubst program/%.S,$(BUILD_DIR)/%.o,$(_S_UPPER_SOURCES))
+OBJS = $(_C_OBJS) $(_S_OBJS) $(_S_UPPER_OBJS)
 
 # 将目标文件链接到最终 ELF 可执行文件的规则
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
@@ -128,6 +144,12 @@ $(BUILD_DIR)/%.o: program/%.s | dirs
 	@mkdir -p $(dir $@)
 	@echo "Assembling: $< -> $@"
 	$(CC) $(CFLAGS_S) -c $< -o $@
+
+# 将预处理汇编源文件（.S）汇编为目标文件（需要C预处理器展开宏）
+$(BUILD_DIR)/%.o: program/%.S | dirs
+	@mkdir -p $(dir $@)
+	@echo "Assembling (preprocessed): $< -> $@"
+	$(CC) $(CFLAGS_S) $(FREERTOS_INCLUDE) -c $< -o $@
 
 $(TARGET_BIN): $(TARGET_ELF) dirs
 	@echo "Converting $< to $@"
