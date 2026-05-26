@@ -6,7 +6,7 @@
 #include "spi.h"
 #include "sdcard.h"
 #include "timer.h"
-#include "mtime.h"
+#include "clint.h"
 #include "ddr.h"
 #include "print.h"
 #include "test_rtos.h"
@@ -520,8 +520,8 @@ static void shell_test_mtime(const char *arg) {
     trap_hit_flag = 0;
     trap_cause_val = 0;
     asm volatile("csrs mie, %0" :: "r"(1 << 7));
-    uint64_t current = mtime_read();
-    mtimecmp_write(current + 50000);
+    uint64_t current = clint_get_mtime();
+    clint_set_mtimecmp(current + 50000);
     asm volatile("csrs mstatus, %0" :: "r"(1 << 3));
     printf("Waiting for mtime interrupt...\n");
     int timeout = 0;

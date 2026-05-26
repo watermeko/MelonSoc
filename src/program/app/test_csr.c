@@ -1,6 +1,5 @@
 #include "test_csr.h"
-#include "mtime.h"
-#include "msip.h"
+#include "clint.h"
 
 volatile uint32_t trap_cause_val = 0;
 volatile int trap_hit_flag = 0;
@@ -19,10 +18,10 @@ INTERRUPT_ATTR void trap_handler(void) {
         asm volatile("csrw mepc, %0" :: "r"(epc));
     } else {
         if ((cause & 0xFF) == 7) {
-            uint64_t now = mtime_read();
-            mtimecmp_write(now + 100000);
+            uint64_t now = clint_get_mtime();
+            clint_set_mtimecmp(now + 100000);
         } else if ((cause & 0xFF) == 3) {
-            msip_clear();
+            clint_clear_msip();
         } else if ((cause & 0xFF) == 11) {
             *((volatile uint32_t*)(0x400044u)) = 1;
         }

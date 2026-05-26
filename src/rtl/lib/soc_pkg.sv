@@ -32,15 +32,11 @@
             localparam logic [31:0] IO_SPI_STATUS_ADDR = IO_BASE_ADDR + 32'h0000_0058;
             localparam logic [31:0] IO_SPI_DIV_ADDR    = IO_BASE_ADDR + 32'h0000_005C;
 
-            // MTIME
-            localparam logic [31:0] IO_MTIME_LO_ADDR    = IO_BASE_ADDR + 32'h0000_0060;
-            localparam logic [31:0] IO_MTIME_HI_ADDR    = IO_BASE_ADDR + 32'h0000_0064;
-            localparam logic [31:0] IO_MTIMECMP_LO_ADDR = IO_BASE_ADDR + 32'h0000_0068;
-            localparam logic [31:0] IO_MTIMECMP_HI_ADDR = IO_BASE_ADDR + 32'h0000_006C;
-
-            // MSIP (Machine Software Interrupt Pending)
-            // 写 1 置位软件中断，写 0 清除；读回当前状态
-            localparam logic [31:0] IO_MSIP_ADDR        = IO_BASE_ADDR + 32'h0000_0070;
+            // CLINT (Core Local Interruptor) — standard SiFive layout
+            localparam logic [31:0] IO_CLINT_BASE_ADDR   = IO_BASE_ADDR;
+            localparam logic [31:0] IO_CLINT_MSIP_ADDR   = IO_CLINT_BASE_ADDR + 32'h0000_0000;  // hart 0
+            localparam logic [31:0] IO_CLINT_MTIMECMP_ADDR = IO_CLINT_BASE_ADDR + 32'h0000_4000; // hart 0, lo
+            localparam logic [31:0] IO_CLINT_MTIME_ADDR  = IO_CLINT_BASE_ADDR + 32'h0000_BFF8;  // 64-bit timer
 
             // DDR3 APP（参考 ref/src/ddr3_syn_top.v 的 app_* 接口）
             // CTRL   @ IO_DDR_CTRL_ADDR:
@@ -66,7 +62,7 @@
             localparam logic [31:0] IO_DDR_RDATA3_ADDR  = IO_BASE_ADDR + 32'h0000_012C;
 
             // 地址的第高20位用于区分外设区域
-            localparam logic [31:0] MMIO_REGION_MASK   = 32'hFFFF_F000;
+            localparam logic [31:0] MMIO_REGION_MASK   = 32'hFFFF_0000;
             localparam logic [31:0] MMIO_REGION_BASE   = IO_BASE_ADDR & MMIO_REGION_MASK;
 
             // 字节地址到字地址

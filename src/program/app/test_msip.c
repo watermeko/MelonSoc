@@ -1,5 +1,5 @@
 #include "test_msip.h"
-#include "msip.h"
+#include "clint.h"
 #include "test_csr.h"
 
 int printf(const char *fmt, ...);
@@ -19,13 +19,13 @@ void shell_test_msip(const char *arg) {
     trap_hit_flag  = 0;
     trap_cause_val = 0;
 
-    msip_clear();
+    clint_clear_msip();
 
     asm volatile("csrs mie, %0" :: "r"(1 << 3));
     asm volatile("csrs mstatus, %0" :: "r"(1 << 3));
 
     printf("Triggering software interrupt via MSIP MMIO...\n");
-    msip_trigger();
+    clint_set_msip();
 
     int timeout = 0;
     while (!trap_hit_flag) {

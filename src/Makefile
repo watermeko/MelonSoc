@@ -10,11 +10,10 @@ KCONFIG_FILE    = Kconfig
 KCONFIG_CONFIG ?= .config
 AUTOCONF_H      = $(BUILD_DIR)/include/autoconf.h
 
-KCONFIGLIB_DIR  = /usr/lib/python3/dist-packages
-KCONFIG_ALLDEF  = python3 $(KCONFIGLIB_DIR)/alldefconfig.py
-KCONFIG_GEN     = python3 $(KCONFIGLIB_DIR)/genconfig.py
-KCONFIG_MENU    = python3 $(KCONFIGLIB_DIR)/menuconfig.py
-KCONFIG_GUI     = python3 $(KCONFIGLIB_DIR)/guiconfig.py
+KCONFIG_ALLDEF  = alldefconfig
+KCONFIG_GEN     = genconfig
+KCONFIG_MENU    = menuconfig
+KCONFIG_GUI     = guiconfig
 
 -include $(KCONFIG_CONFIG)
 
@@ -30,6 +29,15 @@ RTL_SOURCES = $(addprefix $(RTL_DIR)/, soc.sv top.v)
 SIM_CPP = $(SIM_DIR)/bench.cpp
 SIM_CPP_ABS = $(abspath $(SIM_CPP))
 SIM_ARGS ?=
+
+# Convenience: SIM_CMD=<cmd>  →  inject one shell command at startup
+#   make simulate SIM_CMD="test-mtime"
+# For multiple commands, repeat --sim-arg directly:
+#   make simulate SIM_ARGS="--sim-arg test-mtime --sim-arg test-msip"
+SIM_CMD ?=
+ifneq ($(SIM_CMD),)
+    SIM_ARGS += --sim-arg "$(SIM_CMD)"
+endif
 
 TARGET_NAME = program
 _S = program/boot/$(TARGET_NAME).s

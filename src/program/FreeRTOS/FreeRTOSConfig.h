@@ -19,13 +19,13 @@
 #define configISR_STACK_SIZE_WORDS               128
 
 /*
- * MelonSoc MTIME/MTIMECMP MMIO layout (mtime_mmio.sv):
- *   0x400060 = mtime_lo,    0x400064 = mtime_hi
- *   0x400068 = mtimecmp_lo, 0x40006C = mtimecmp_hi
- * port.c reads +0/+4 for the 64-bit mtime value and writes +0/+4 for mtimecmp.
+ * MelonSoC standard SiFive CLINT (clint.sv):
+ *   CLINT_BASE = 0x400000
+ *   MTIME    @ CLINT_BASE + 0xBFF8  = 0x40BFF8
+ *   MTIMECMP @ CLINT_BASE + 0x4000  = 0x404000
  */
-#define configMTIME_BASE_ADDRESS                 ( 0x400060UL )
-#define configMTIMECMP_BASE_ADDRESS              ( 0x400068UL )
+#define configMTIME_BASE_ADDRESS                 ( 0x40BFF8UL )
+#define configMTIMECMP_BASE_ADDRESS              ( 0x404000UL )
 
 #define configUSE_IDLE_HOOK                      0
 #define configUSE_TICK_HOOK                      0

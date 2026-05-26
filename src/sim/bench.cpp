@@ -91,7 +91,7 @@ struct SimArgs {
   bool max_cycles_user = false;
   uint32_t clk_hz = 27'000'000;
   uint32_t uart_baud = 115'200;
-  std::string sim_arg;
+  std::vector<std::string> sim_args;
 };
 
 static void print_help(const char* argv0) {
@@ -104,7 +104,8 @@ static void print_help(const char* argv0) {
       "  --max-cycles <N>        Stop after N cycles (0 = run forever)\n"
       "  --clk-hz <N>            SOC clk frequency (default: 27000000)\n"
       "  --uart-baud <N>         UART baud (default: 115200)\n"
-      "  --sim-arg <cmd>         Shell command to inject via UART at startup\n"
+      "  --sim-arg <cmd>         Shell command to inject via UART at startup.\n"
+      "                          Repeatable; each is sent with a 1M-cycle gap.\n"
       "  --help                  Show this help\n",
       argv0);
 }
@@ -126,7 +127,7 @@ static SimArgs parse_args(int argc, char** argv) {
     } else if (arg == "--uart-baud" && i + 1 < argc) {
       a.uart_baud = parse_u32(argv[++i], a.uart_baud);
     } else if (arg == "--sim-arg" && i + 1 < argc) {
-      a.sim_arg = argv[++i];
+      a.sim_args.push_back(argv[++i]);
     } else {
       std::fprintf(stderr, "Unknown arg: %s\n", arg.c_str());
       print_help(argv[0]);
@@ -218,16 +219,24 @@ int main(int argc, char** argv) {
 
   bool eof_seen = false;
   uint32_t poll_div = 0;
-  bool sim_arg_sent = args.sim_arg.empty();
+  size_t sim_arg_idx = 0;
+  bool sim_args_all_sent = args.sim_args.empty();
 
   uint64_t i = 0;
   while (!Verilated::gotFinish()) {
     if (args.max_cycles != 0 && i >= args.max_cycles) break;
 
-    if (!sim_arg_sent && i == 2'000'000) {
-      uart.enqueue_bytes(args.sim_arg);
-      uart.enqueue_byte('\n');
-      sim_arg_sent = true;
+    // Inject --sim-arg commands at intervals after boot.
+    // First command at 2M cycles, subsequent every 1M.
+    if (!sim_args_all_sent) {
+      uint64_t trigger_cycle = 2'000'000 + sim_arg_idx * 1'000'000;
+      if (i == trigger_cycle) {
+        uart.enqueue_bytes(args.sim_args[sim_arg_idx]);
+        uart.enqueue_byte('\n');
+        sim_arg_idx++;
+        if (sim_arg_idx >= args.sim_args.size())
+          sim_args_all_sent = true;
+      }
     }
 
     if (args.interactive) {
