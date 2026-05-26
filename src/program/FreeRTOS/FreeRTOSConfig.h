@@ -7,12 +7,12 @@
 #define configUSE_TICKLESS_IDLE                  0
 
 #define configCPU_CLOCK_HZ                       ( 27000000UL )
-#define configTICK_RATE_HZ                       ( ( TickType_t ) 100 )
+#define configTICK_RATE_HZ                       ( ( TickType_t ) 1000 )
 
 #define configMAX_PRIORITIES                     ( 4 )
 #define configMINIMAL_STACK_SIZE                 ( ( unsigned short ) 256 )
 #define configMAX_TASK_NAME_LEN                  ( 8 )
-#define configTOTAL_HEAP_SIZE                    ( ( size_t ) ( 4 * 1024 ) )
+#define configTOTAL_HEAP_SIZE                    ( ( size_t ) ( 10 * 1024 ) )
 #define configUSE_16_BIT_TICKS                   0
 #define configIDLE_SHOULD_YIELD                  1
 
@@ -39,7 +39,10 @@
 #define configUSE_TASK_NOTIFICATIONS             0
 #define configUSE_QUEUE_SETS                     0
 #define configQUEUE_REGISTRY_SIZE                0
-#define configUSE_TIMERS                         0
+#define configUSE_TIMERS                         1
+#define configTIMER_TASK_PRIORITY                ( 2 )
+#define configTIMER_QUEUE_LENGTH                 8
+#define configTIMER_TASK_STACK_DEPTH             ( 256 )
 #define configGENERATE_RUN_TIME_STATS            0
 #define configUSE_TRACE_FACILITY                 0
 #define configUSE_STATS_FORMATTING_FUNCTIONS     0
@@ -53,10 +56,10 @@
 #define configASSERT( x )   if( ( x ) == 0 ) { for( ;; ); }
 
 #define INCLUDE_vTaskDelay                       1
-#define INCLUDE_vTaskDelete                      0
-#define INCLUDE_vTaskSuspend                     0
-#define INCLUDE_vTaskPrioritySet                 0
-#define INCLUDE_uxTaskPriorityGet                0
+#define INCLUDE_vTaskDelete                      1
+#define INCLUDE_vTaskSuspend                     1
+#define INCLUDE_vTaskPrioritySet                 1
+#define INCLUDE_uxTaskPriorityGet                1
 #define INCLUDE_vTaskDelayUntil                  0
 #define INCLUDE_xTaskGetSchedulerState           0
 #define INCLUDE_xTaskGetCurrentTaskHandle        0

@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
   uart.set_params(args.clk_hz, args.uart_baud);
 
   if (!args.max_cycles_user && !::isatty(STDIN_FILENO)) {
-    args.max_cycles = 20'000'000;
+    args.max_cycles = 80'000'000;
   }
 
   dut.rxd = 1;

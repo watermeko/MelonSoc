@@ -15,13 +15,23 @@ KCONFIG_GEN     = genconfig
 KCONFIG_MENU    = menuconfig
 KCONFIG_GUI     = guiconfig
 
--include $(KCONFIG_CONFIG)
+$(KCONFIG_CONFIG):
+	@echo "No .config found — generating defaults..."
+	$(KCONFIG_ALLDEF) $(KCONFIG_FILE)
 
-CONFIG_APP_TEST_M     ?= y
-CONFIG_APP_TEST_CSR   ?= y
-CONFIG_APP_TEST_IRQ   ?= y
-CONFIG_APP_TEST_MSIP  ?= y
-CONFIG_APP_TEST_MTIME ?= y
+include $(KCONFIG_CONFIG)
+# Auto-discover test source files from CONFIG_APP_TEST_* = y in .config
+# To add a new test: 1) add CONFIG_APP_TEST_FOO to Kconfig
+# 2) add "_TEST_SRC_FOO := test_foo.c" below (or reuse existing)
+_TEST_ENABLED := $(foreach v,$(filter CONFIG_APP_TEST_%,$(.VARIABLES)),$(if $(filter y,$($(v))),$(patsubst CONFIG_APP_TEST_%,%,$(v))))
+
+_TEST_SRC_CSR   := test_csr.c
+_TEST_SRC_IRQ   := test_csr.c
+_TEST_SRC_MTIME := test_csr.c
+_TEST_SRC_MSIP  := test_msip.c
+
+_TEST_SOURCES := $(foreach n,$(_TEST_ENABLED),$(if $(_TEST_SRC_$(n)),program/app/$(_TEST_SRC_$(n))))
+
 
 RTL_DIR = rtl
 SIM_DIR = sim
@@ -56,15 +66,11 @@ _C_SOURCES = program/utils/print.c \
              program/FreeRTOS/queue.c \
              program/FreeRTOS/tasks.c \
              program/FreeRTOS/portable/MemMang/heap_4.c \
-             program/FreeRTOS/portable/GCC/RISC-V/port.c
+             program/FreeRTOS/portable/GCC/RISC-V/port.c \
+             program/FreeRTOS/timers.c \
+             program/app/freertos_hooks.c
 
-ifneq ($(filter y,$(CONFIG_APP_TEST_CSR) $(CONFIG_APP_TEST_IRQ) $(CONFIG_APP_TEST_MTIME) $(CONFIG_APP_TEST_MSIP)),)
-_C_SOURCES += program/app/test_csr.c
-endif
-
-ifeq ($(CONFIG_APP_TEST_MSIP),y)
-_C_SOURCES += program/app/test_msip.c
-endif
+_C_SOURCES += $(sort $(_TEST_SOURCES))
 
 _S_UPPER_SOURCES = program/FreeRTOS/portable/GCC/RISC-V/portASM.S
 LINKER_SCRIPT = program/boot/linker_pipeline.ld      
@@ -118,10 +124,6 @@ all:
 
 dirs:
 	@mkdir -p $(BUILD_DIR)
-
-$(KCONFIG_CONFIG):
-	@echo "No .config found — generating defaults..."
-	$(KCONFIG_ALLDEF) $(KCONFIG_FILE)
 
 $(AUTOCONF_H): $(KCONFIG_CONFIG) | dirs
 	@mkdir -p $(dir $(AUTOCONF_H))

@@ -9,5 +9,6 @@ docs/
 ref/
 
 .serena
+.reasonix/
 
 .config.old
