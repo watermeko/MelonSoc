@@ -12,7 +12,7 @@
 #define configMAX_PRIORITIES                     ( 4 )
 #define configMINIMAL_STACK_SIZE                 ( ( unsigned short ) 256 )
 #define configMAX_TASK_NAME_LEN                  ( 8 )
-#define configTOTAL_HEAP_SIZE                    ( ( size_t ) ( 10 * 1024 ) )
+#define configTOTAL_HEAP_SIZE                    ( ( size_t ) ( 1024 * 1024 ) )
 #define configUSE_16_BIT_TICKS                   0
 #define configIDLE_SHOULD_YIELD                  1
 

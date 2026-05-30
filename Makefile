@@ -33,5 +33,6 @@ build_fpga:
 	rm -f "$$script"
 
 terminal:
+	stty -F /dev/ttyUSB1 115200 cs8 -cstopb -parenb raw -echo 2>/dev/null; \
 	picocom -b 115200 --imap lfcrlf,crcrlf --omap delbs,crlf --flow n /dev/ttyUSB1
 
