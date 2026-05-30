@@ -261,13 +261,20 @@ $(TARGET_DATARAM_HEX): $(TARGET_DATA_BIN) $(BIN2HEX_EXECUTABLE) | dirs
 
 load:
 	@echo "Loading bitstream to FPGA SRAM..."
-	openFPGALoader -b tangprimer20k ../impl/pnr/melon-riscv.fs
-	@echo "Load complete."
+	sudo gw_programmer --scan
+	gw_programmer --device GW2A-18C --operation_index 2 --fsFile ../impl/pnr/melon-riscv.fs
+	@echo "Load complete. Resetting USB..."
+	sudo modprobe -r ftdi_sio && sudo modprobe ftdi_sio
+	@echo "USB reset complete."
+
 
 load_flash:
-	@echo "Flashing bitstream to FPGA flash..."
-	openFPGALoader -c ft2232 -b tangprimer20k -f ../impl/pnr/melon-riscv.fs --unprotect-flash
-	@echo "Flash complete."
+	@echo "Loading bitstream to FPGA FLASH..."
+	sudo gw_programmer --scan
+	gw_programmer --device GW2A-18C --operation_index 2 --fsFile ../impl/pnr/melon-riscv.fs
+	@echo "Load complete. Resetting USB..."
+	sudo modprobe -r ftdi_sio && sudo modprobe ftdi_sio
+	@echo "USB reset complete."
 
 simulate: build $(VERILOG_SOURCES) $(SIM_CPP)
 	@echo "Running Verilator to compile Verilog sources..."
