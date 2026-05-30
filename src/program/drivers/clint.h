@@ -37,14 +37,26 @@ static inline volatile uint32_t *clint_mmio(uint32_t offset) {
     return (volatile uint32_t *)(CLINT_BASE + offset);
 }
 
+static inline uint32_t clint_read32(uint32_t offset) {
+    volatile uint32_t *reg = clint_mmio(offset);
+
+    /*
+     * MMIO loads return through a registered read-data path in the SoC, so the
+     * first read after an address change can observe the previous register.
+     * Read twice and use the second value to get the addressed CLINT register.
+     */
+    (void)*reg;
+    return *reg;
+}
+
 /* ---- Machine Timer (mtime / mtimecmp) ---- */
 
 static inline uint64_t clint_get_mtime(void) {
     uint32_t hi, lo;
     do {
-        hi = *clint_mmio(CLINT_MTIME_OFFSET + 4);
-        lo = *clint_mmio(CLINT_MTIME_OFFSET);
-    } while (hi != *clint_mmio(CLINT_MTIME_OFFSET + 4));
+        hi = clint_read32(CLINT_MTIME_OFFSET + 4);
+        lo = clint_read32(CLINT_MTIME_OFFSET);
+    } while (hi != clint_read32(CLINT_MTIME_OFFSET + 4));
     return ((uint64_t)hi << 32) | lo;
 }
 

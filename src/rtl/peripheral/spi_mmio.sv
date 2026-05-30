@@ -7,7 +7,7 @@ module spi_mmio #(
     ) (
         input  logic clk,
         input  logic rst_n,
-        simple_bus_if.slave bus,
+        wb_if.slave bus,
 
         output logic spi_cs_n,
         output logic spi_sck,
@@ -15,6 +15,8 @@ module spi_mmio #(
         input  logic spi_miso
     );
     import soc_pkg::*;
+    assign bus.ack = bus.cyc && bus.stb;
+    assign bus.stall = 1'b0;
 
     // ---------------- 寄存器映射 ----------------
     // TXRX   @ IO_SPI_TXRX_ADDR   [7:0]  写：发送字节（TX），读：接收字节（RX）
@@ -26,10 +28,10 @@ module spi_mmio #(
 
     logic sel_txrx, sel_ctrl, sel_status, sel_div;
     always_comb begin
-        sel_txrx   = (align_word(bus.addr) == IO_SPI_TXRX_ADDR);
-        sel_ctrl   = (align_word(bus.addr) == IO_SPI_CTRL_ADDR);
-        sel_status = (align_word(bus.addr) == IO_SPI_STATUS_ADDR);
-        sel_div    = (align_word(bus.addr) == IO_SPI_DIV_ADDR);
+        sel_txrx   = (align_word(bus.adr) == IO_SPI_TXRX_ADDR);
+        sel_ctrl   = (align_word(bus.adr) == IO_SPI_CTRL_ADDR);
+        sel_status = (align_word(bus.adr) == IO_SPI_STATUS_ADDR);
+        sel_div    = (align_word(bus.adr) == IO_SPI_DIV_ADDR);
     end
 
     // ---------------- MMIO 寄存器 ----------------
@@ -70,14 +72,14 @@ module spi_mmio #(
             cs_n_reg <= 1'b1;
         end
         else begin
-            if (bus.wen && sel_txrx && (|bus.wstrb)) begin
-                tx_reg <= bus.wdata[7:0];
+            if (bus.cyc && bus.stb && bus.we && sel_txrx && (|bus.sel)) begin
+                tx_reg <= bus.dat_w[7:0];
             end
-            if (bus.wen && sel_div && (|bus.wstrb)) begin
-                div_reg <= bus.wdata[15:0];
+            if (bus.cyc && bus.stb && bus.we && sel_div && (|bus.sel)) begin
+                div_reg <= bus.dat_w[15:0];
             end
-            if (bus.wen && sel_ctrl && (|bus.wstrb)) begin
-                cs_n_reg <= bus.wdata[0];
+            if (bus.cyc && bus.stb && bus.we && sel_ctrl && (|bus.sel)) begin
+                cs_n_reg <= bus.dat_w[0];
             end
         end
     end
@@ -102,7 +104,7 @@ module spi_mmio #(
                     div_cnt <= div_cnt - 16'd1;
             end
 
-            if (bus.wen && sel_ctrl && (|bus.wstrb) && bus.wdata[1] && !busy) begin
+            if (bus.cyc && bus.stb && bus.we && sel_ctrl && (|bus.sel) && bus.dat_w[1] && !busy) begin
                 // START：清除粘滞标志，并启动一次传输。
                 busy <= 1'b1;
                 done <= 1'b0;
@@ -140,7 +142,7 @@ module spi_mmio #(
                 end
             end
 
-            if (!busy && !(bus.wen && sel_ctrl && (|bus.wstrb) && bus.wdata[1])) begin
+            if (!busy && !(bus.cyc && bus.stb && bus.we && sel_ctrl && (|bus.sel) && bus.dat_w[1])) begin
                 spi_sck <= 1'b0;
             end
         end
@@ -156,20 +158,19 @@ module spi_mmio #(
 
     always_comb begin
         if (sel_txrx) begin
-            bus.rdata = {24'b0, rx_reg};
+            bus.dat_r = {24'b0, rx_reg};
         end
         else if (sel_ctrl) begin
-            bus.rdata = {30'b0, 1'b0, cs_n_reg};
+            bus.dat_r = {30'b0, 1'b0, cs_n_reg};
         end
         else if (sel_status) begin
-            bus.rdata = status_rdata;
+            bus.dat_r = status_rdata;
         end
         else if (sel_div) begin
-            bus.rdata = {16'b0, div_reg};
+            bus.dat_r = {16'b0, div_reg};
         end
         else begin
-            bus.rdata = 32'b0;
+            bus.dat_r = 32'b0;
         end
     end
 endmodule
-

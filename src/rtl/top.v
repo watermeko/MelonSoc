@@ -9,10 +9,10 @@ module top(
         inout  i2c_scl,
         inout  i2c_sda,
 
-        output sd_cs_n,
+        inout  sd_cs_n,
         output sd_sck,
-        output sd_mosi,
-        input  sd_miso,
+        inout  sd_mosi,
+        inout  sd_miso,
 
         output [14-1:0]             ddr_addr,       //ROW_WIDTH=14
         output [3-1:0]              ddr_bank,       //BANK_WIDTH=3
@@ -51,6 +51,19 @@ module top(
     wire         ddr_app_rdata_end;
     wire [127:0] ddr_app_rdata;
     wire         ddr_init_calib_complete;
+    wire spi_cs_n_unused;
+    wire spi_sck_unused;
+    wire spi_mosi_unused;
+    wire sdclk_native;
+    wire [3:0] sddat_native;
+
+    assign sd_sck = sdclk_native;
+    assign sd_miso = 1'bz;
+    assign sddat_native[0] = sd_miso;
+    assign sddat_native[1] = 1'b1;
+    assign sddat_native[2] = 1'b1;
+    assign sd_cs_n = 1'bz;
+    assign sddat_native[3] = sd_cs_n;
 
     SOC u_soc(
             .clk        (clk       ),
@@ -61,10 +74,13 @@ module top(
             .txd        (txd       ),
             .i2c_scl    (i2c_scl   ),
             .i2c_sda    (i2c_sda   ),
-            .spi_cs_n(sd_cs_n),
-            .spi_sck(sd_sck),
-            .spi_mosi(sd_mosi),
-            .spi_miso(sd_miso),
+            .spi_cs_n(spi_cs_n_unused),
+            .spi_sck(spi_sck_unused),
+            .spi_mosi(spi_mosi_unused),
+            .spi_miso(1'b1),
+            .sdclk(sdclk_native),
+            .sdcmd(sd_mosi),
+            .sddat(sddat_native),
 
             .ddr_app_addr(ddr_app_addr),
             .ddr_app_cmd_en(ddr_app_cmd_en),

@@ -9,7 +9,7 @@ module cpu (
         input logic sw_irq,
         input  logic timer_irq,
         imem_if.master instr,
-        simple_bus_if.master data
+        wb_if.master data
     );
     import soc_pkg::*;
     import rvc::*;
@@ -234,10 +234,15 @@ module cpu (
     // - 除法是多周期迭代单元，流水线会一直停住直到 div_result_valid。
     logic stall_load_use;
     logic stall_div;
+    logic stall_mem;
+    logic mem_started;
+    logic mem_req;
     logic stall_any;
     always_comb begin
         stall_load_use = 1'b0;
         stall_div = 1'b0;
+        stall_mem = 1'b0;
+        mem_req = ex_mem_valid && (ex_mem_isLoad || ex_mem_isStore);
 
         // 当前一条指令是 load，且当前指令使用了它加载到的寄存器时，停顿流水线
         if (id_valid && id_ex_valid && id_ex_isLoad && (id_ex_rd != 5'd0)) begin
@@ -245,12 +250,12 @@ module cpu (
                 stall_load_use = 1'b1;
             end
         end
-
         if (div_busy || (id_ex_isDIV && id_ex_valid && !div_result_valid)) begin
             stall_div = 1'b1;
         end
 
-        stall_any = stall_load_use || stall_div;
+        stall_mem = mem_req && (!mem_started || !data.ack);
+        stall_any = stall_load_use || stall_div || stall_mem;
     end
 
     // ---------------------- 前端取指节流 ----------------------
@@ -328,7 +333,7 @@ module cpu (
 
     always_comb begin
         ex_csr_we = 1'b0;
-        if (id_ex_valid && !halted) begin
+        if (id_ex_valid && !halted && !stall_mem) begin
             if (id_ex_isCSRRW) begin
                 ex_csr_we = 1'b1;
             end else if ((id_ex_isCSRRS || id_ex_isCSRRC) && (id_ex_rs1 != 5'd0)) begin
@@ -352,7 +357,7 @@ module cpu (
         trap_cause = 32'b0;
 
         // 硬件中断
-        if (mstatus_mie && id_ex_valid && !halt_now) begin
+        if (mstatus_mie && id_ex_valid && !halt_now && !stall_mem) begin
             if (active_irq[11]) begin // 外部中断 (MEIP)
                 trap_req = 1'b1;
                 trap_cause = 32'h8000_000B; // 最高位为1表示中断，异常码 11
@@ -366,7 +371,7 @@ module cpu (
         end
 
         // 软件trap
-        if (!trap_req && id_ex_valid) begin
+        if (!trap_req && id_ex_valid && !stall_mem) begin
             if (id_ex_isECALL) begin
                 trap_req = 1'b1;
                 trap_cause = 32'd11; // Machine ECALL
@@ -396,7 +401,7 @@ module cpu (
                 csr_mstatus[7] <= csr_mstatus[3]; 
                 csr_mstatus[3] <= 1'b0;
             end 
-            else if (id_ex_valid && id_ex_isMRET) begin
+            else if (id_ex_valid && id_ex_isMRET && !stall_mem) begin
                 // 恢复现场
                 // MIE 恢复为 MPIE 的旧值，MPIE 置一
                 csr_mstatus[3] <= csr_mstatus[7];
@@ -619,6 +624,13 @@ module cpu (
                               ex_redirect_pc = ex_pc_plus_jimm;
                           end
                       end
+
+                      if (stall_mem) begin
+                          ex_redirect = 1'b0;
+                          ex_redirect_pc = 32'b0;
+                          ex_wb_en = 1'b0;
+                          ex_store_wmask = 4'b0000;
+                      end
     end
 
     // ---------------------- WB 阶段加载数据格式化 ----------------------
@@ -631,14 +643,14 @@ module cpu (
         mem_byteAccess     = (mem_wb_funct3[1:0] == 2'b00);
         mem_halfwordAccess = (mem_wb_funct3[1:0] == 2'b01);
 
-        load_half = mem_wb_addr_low[1] ? data.rdata[31:16] : data.rdata[15:0];
+        load_half = mem_wb_addr_low[1] ? data.dat_r[31:16] : data.dat_r[15:0];
         load_byte = mem_wb_addr_low[0] ? load_half[15:8] : load_half[7:0];
         load_sign = ~mem_wb_funct3[2] & (mem_byteAccess ? load_byte[7] : load_half[15]);
 
         wb_load_data =
             mem_byteAccess     ? {{24{load_sign}}, load_byte} :
             mem_halfwordAccess ? {{16{load_sign}}, load_half} :
-            data.rdata;
+            data.dat_r;
     end
 
     always_comb begin
@@ -649,13 +661,14 @@ module cpu (
     // ---------------------- 总线驱动 ----------------------
     always_comb begin
         instr.addr = pc_f;
-        instr.ren  = !halted;
+        instr.ren  = fetch_req;
 
-        data.addr  = ex_mem_addr;
-        data.ren   = !halted && ex_mem_valid && ex_mem_isLoad;
-        data.wen   = !halted && ex_mem_valid && ex_mem_isStore;
-        data.wdata = ex_mem_store_wdata;
-        data.wstrb = (!halted && ex_mem_valid && ex_mem_isStore) ? ex_mem_store_wmask : 4'b0000;
+        data.adr   = ex_mem_addr;
+        data.dat_w = ex_mem_store_wdata;
+        data.sel   = (!halted && ex_mem_valid && ex_mem_isStore) ? ex_mem_store_wmask : 4'b1111;
+        data.we    = !halted && ex_mem_valid && ex_mem_isStore;
+        data.cyc   = !halted && mem_req;
+        data.stb   = data.cyc && mem_started;
     end
 
     // ---------------------- 时序逻辑 ----------------------
@@ -685,6 +698,7 @@ module cpu (
             { mem_wb_valid, mem_wb_rd, mem_wb_isLoad, mem_wb_funct3, mem_wb_addr_low,
               mem_wb_wb_en, mem_wb_wb_value
             } <= '0;
+            mem_started <= 1'b0;
 
             {csr_cycle, csr_instret} <= '0;
 
@@ -808,7 +822,7 @@ module cpu (
                     if_pc    <= 32'b0;
                     if_valid <= 1'b0;
                 end
-                else if (fetch_req) begin
+                else if (fetch_req && !instr.stall) begin
                     if_pc    <= pc_f;
                     if_valid <= 1'b1;
                     pc_f     <= pc_f + 32'd4;
@@ -830,7 +844,7 @@ module cpu (
                 if (halt_now || ex_redirect || stall_load_use) begin
                     id_ex_valid <= 1'b0;
                 end
-                else if (!stall_div) begin
+                else if (!stall_div && !stall_mem) begin
                     id_ex_valid  <= id_valid;
                     id_ex_pc     <= id_pc;
                     id_ex_instr  <= id_instr;
@@ -868,7 +882,7 @@ module cpu (
             end
 
             // EX/MEM 更新
-            if (!halted) begin
+            if (!halted && !stall_mem) begin
                 ex_mem_valid <= id_ex_valid;
                 ex_mem_rd    <= id_ex_rd;
                 ex_mem_isLoad  <= id_ex_isLoad;
@@ -882,7 +896,7 @@ module cpu (
             end
 
             // MEM/WB 更新
-            if (!halted) begin
+            if (!halted && !stall_mem) begin
                 mem_wb_valid <= ex_mem_valid;
                 mem_wb_rd    <= ex_mem_rd;
                 mem_wb_isLoad <= ex_mem_isLoad;
@@ -891,11 +905,18 @@ module cpu (
                 mem_wb_wb_en <= ex_mem_wb_en;
                 mem_wb_wb_value <= ex_mem_wb_value;
             end
+
+            if (halted || halt_now || ex_redirect || !mem_req || (mem_started && data.ack)) begin
+                mem_started <= 1'b0;
+            end
+            else if (mem_req && !mem_started) begin
+                mem_started <= 1'b1;
+            end
         end
     end
 
     // ---------------------- 除法器控制信号 ----------------------
-    assign div_start = !halted && id_ex_isDIV && id_ex_valid && !div_result_valid && !div_busy;
+    assign div_start = !halted && !stall_mem && id_ex_isDIV && id_ex_valid && !div_result_valid && !div_busy;
     assign div_flush = !halted && (ex_redirect || halt_now);
 
     // ---------------------- 除法器实例化 ----------------------

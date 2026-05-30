@@ -1,5 +1,15 @@
 #include "uart.h"
 
+static inline uint32_t uart_read_reg(volatile uint32_t *reg) {
+    /*
+     * MMIO reads come back through a registered SoC read-data path.
+     * When switching addresses, the first read can observe the previous
+     * register value, so read twice and use the second sample.
+     */
+    (void)*reg;
+    return *reg;
+}
+
 static inline void uart_write_data(uint32_t value) {
     *uart_data_reg() = value;
 }
@@ -30,7 +40,7 @@ void uart_clear_status(uint32_t mask) {
 }
 
 uint32_t uart_get_status(void) {
-    return *uart_ctrl_reg();
+    return uart_read_reg(uart_ctrl_reg());
 }
 
 int uart_tx_ready(void) {

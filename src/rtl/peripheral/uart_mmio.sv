@@ -8,9 +8,11 @@ module uart_mmio #(
         input  logic rst_n,
         input  logic rxd,
         output logic txd,
-        simple_bus_if.slave bus
+        wb_if.slave bus
     );
     import soc_pkg::*;
+    assign bus.ack = bus.cyc && bus.stb;
+    assign bus.stall = 1'b0;
 
     // ---------------- 寄存器映射 ----------------
     // DAT  @ IO_UART_DAT_ADDR   [7:0]  写：发送字节，读：接收字节
@@ -23,8 +25,8 @@ module uart_mmio #(
 
     logic sel_dat, sel_ctrl;
     always_comb begin
-        sel_dat  = (align_word(bus.addr) == IO_UART_DAT_ADDR);
-        sel_ctrl = (align_word(bus.addr) == IO_UART_CTRL_ADDR);
+        sel_dat  = (align_word(bus.adr) == IO_UART_DAT_ADDR);
+        sel_ctrl = (align_word(bus.adr) == IO_UART_CTRL_ADDR);
     end
 
     logic tx_valid;
@@ -37,11 +39,11 @@ module uart_mmio #(
     logic rx_overrun;
     logic rx_frame_err;
 
-    assign tx_valid = bus.wen && sel_dat && (|bus.wstrb);
-    assign rx_ready = bus.ren && sel_dat;
+    assign tx_valid = bus.cyc && bus.stb && bus.we && sel_dat && (|bus.sel);
+    assign rx_ready = bus.cyc && bus.stb && !bus.we && sel_dat;
 
-    assign clear_overrun   = bus.wen && sel_ctrl && bus.wdata[UART_RX_OVERRUN_BIT];
-    assign clear_frame_err = bus.wen && sel_ctrl && bus.wdata[UART_RX_FRAMEERR_BIT];
+    assign clear_overrun   = bus.cyc && bus.stb && bus.we && sel_ctrl && bus.dat_w[UART_RX_OVERRUN_BIT];
+    assign clear_frame_err = bus.cyc && bus.stb && bus.we && sel_ctrl && bus.dat_w[UART_RX_FRAMEERR_BIT];
 
     uart #(
              .CLK_FREQ(CLK_FREQ),
@@ -50,7 +52,7 @@ module uart_mmio #(
              .clk(clk),
              .rst_n(rst_n),
              .rxd(rxd),
-             .tx_data(bus.wdata[7:0]),
+             .tx_data(bus.dat_w[7:0]),
              .tx_valid(tx_valid),
              .tx_ready(tx_ready),
              .txd(txd),
@@ -78,13 +80,13 @@ module uart_mmio #(
 
     always_comb begin
         if (sel_dat) begin
-            bus.rdata = data_rdata;
+            bus.dat_r = data_rdata;
         end
         else if (sel_ctrl) begin
-            bus.rdata = ctrl_rdata;
+            bus.dat_r = ctrl_rdata;
         end
         else begin
-            bus.rdata = 32'b0;
+            bus.dat_r = 32'b0;
         end
     end
 endmodule

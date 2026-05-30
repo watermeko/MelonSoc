@@ -2,6 +2,7 @@
 #include "verilated.h"
 
 #include <cerrno>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,8 @@
 #include <iterator>
 #include <poll.h>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -94,6 +97,47 @@ struct SimArgs {
   std::vector<std::string> sim_args;
 };
 
+struct DdrAppModel {
+  std::unordered_map<uint32_t, std::array<uint32_t, 4>> mem;
+  bool read_pending = false;
+  uint32_t read_addr = 0;
+
+  static uint32_t line_addr(uint32_t app_addr) {
+    return app_addr & ~0x7u;
+  }
+
+  void drive(VSOC& dut) {
+    dut.ddr_app_cmd_rdy = 1;
+    dut.ddr_app_data_rdy = 1;
+    dut.ddr_init_calib_complete = 1;
+    dut.ddr_app_rdata_valid = read_pending ? 1 : 0;
+    dut.ddr_app_rdata_end = read_pending ? 1 : 0;
+
+    auto& line = mem[line_addr(read_addr)];
+    dut.ddr_app_rdata[0] = read_pending ? line[0] : 0;
+    dut.ddr_app_rdata[1] = read_pending ? line[1] : 0;
+    dut.ddr_app_rdata[2] = read_pending ? line[2] : 0;
+    dut.ddr_app_rdata[3] = read_pending ? line[3] : 0;
+  }
+
+  void sample(VSOC& dut) {
+    read_pending = false;
+    if (!dut.ddr_app_cmd_en) return;
+
+    uint32_t addr = line_addr(dut.ddr_app_addr);
+    if (dut.ddr_app_cmd == 0 && dut.ddr_app_wren) {
+      auto& line = mem[addr];
+      line[0] = dut.ddr_app_data[0];
+      line[1] = dut.ddr_app_data[1];
+      line[2] = dut.ddr_app_data[2];
+      line[3] = dut.ddr_app_data[3];
+    } else if (dut.ddr_app_cmd == 1) {
+      read_pending = true;
+      read_addr = addr;
+    }
+  }
+};
+
 static void print_help(const char* argv0) {
   std::fprintf(
       stderr,
@@ -170,29 +214,32 @@ static bool poll_stdin_and_enqueue(UartRxStim& uart, bool& eof_seen) {
 
 }
 
-static void tick(VSOC& dut, vluint64_t& time) {
-  // TODO: DDR MODEL, SD MODEL, SPI MODEL, I2C MODEL
-  dut.ddr_app_cmd_rdy = 0;
-  dut.ddr_app_data_rdy = 0;
-  dut.ddr_app_rdata_valid = 0;
-  dut.ddr_app_rdata_end = 0;
-  dut.ddr_init_calib_complete = 0;
-  dut.ddr_app_rdata[0] = 0;
-  dut.ddr_app_rdata[1] = 0;
-  dut.ddr_app_rdata[2] = 0;
-  dut.ddr_app_rdata[3] = 0;
+static void eval_dut(VSOC& dut, DdrAppModel& ddr, vluint64_t& time) {
+  ddr.drive(dut);
+  dut.eval();
+  time++;
+}
+
+static void tick_app(VSOC& dut, DdrAppModel& ddr, vluint64_t& time) {
+  dut.ddr_app_clk = 0;
+  eval_dut(dut, ddr, time);
+
+  dut.ddr_app_clk = 1;
+  eval_dut(dut, ddr, time);
+  ddr.sample(dut);
+}
+
+static void tick(VSOC& dut, DdrAppModel& ddr, vluint64_t& time) {
+  dut.spi_miso = 1;
+
+  for (int i = 0; i < 4; ++i) {
+    dut.clk = (i >= 2) ? 1 : 0;
+    tick_app(dut, ddr, time);
+  }
 
   dut.clk = 0;
   dut.ddr_app_clk = 0;
-  dut.eval();
-  time++;
-
-  dut.spi_miso = 1;
-
-  dut.clk = 1;
-  dut.ddr_app_clk = 1;
-  dut.eval();
-  time++;
+  eval_dut(dut, ddr, time);
 }
 
 int main(int argc, char** argv) {
@@ -201,6 +248,7 @@ int main(int argc, char** argv) {
   set_stdin_nonblocking();
 
   VSOC dut;
+  DdrAppModel ddr;
   vluint64_t time = 0;
 
   UartRxStim uart;
@@ -214,7 +262,7 @@ int main(int argc, char** argv) {
   dut.i2c_sda= 1;
   dut.spi_miso = 1;
   dut.rst_n = 0;
-  for (int i = 0; i < 10; ++i) tick(dut, time);
+  for (int i = 0; i < 10; ++i) tick(dut, ddr, time);
   dut.rst_n = 1;
 
   bool eof_seen = false;
@@ -252,7 +300,7 @@ int main(int argc, char** argv) {
     uart.tick();
     dut.rxd = uart.line;
 
-    tick(dut, time);
+    tick(dut, ddr, time);
     ++i;
   }
 

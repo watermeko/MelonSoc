@@ -6,9 +6,11 @@ module timer_mmio
         input  logic clk,
         input  logic rst_n,
         output logic timer_irq,
-        simple_bus_if.slave bus
+        wb_if.slave bus
     );
     import soc_pkg::*;
+    assign bus.ack = bus.cyc && bus.stb;
+    assign bus.stall = 1'b0;
 
     // ---------------- 寄存器映射 ----------------
     // CTRL   @ IO_TIMER_CTRL_ADDR
@@ -22,12 +24,12 @@ module timer_mmio
 
     logic sel_ctrl, sel_presc, sel_count, sel_cmp, sel_period, sel_status;
     always_comb begin
-        sel_ctrl   = (align_word(bus.addr) == IO_TIMER_CTRL_ADDR);
-        sel_presc  = (align_word(bus.addr) == IO_TIMER_PRESC_ADDR);
-        sel_count  = (align_word(bus.addr) == IO_TIMER_COUNT_ADDR);
-        sel_cmp    = (align_word(bus.addr) == IO_TIMER_CMP_ADDR);
-        sel_period = (align_word(bus.addr) == IO_TIMER_PERIOD_ADDR);
-        sel_status = (align_word(bus.addr) == IO_TIMER_STATUS_ADDR);
+        sel_ctrl   = (align_word(bus.adr) == IO_TIMER_CTRL_ADDR);
+        sel_presc  = (align_word(bus.adr) == IO_TIMER_PRESC_ADDR);
+        sel_count  = (align_word(bus.adr) == IO_TIMER_COUNT_ADDR);
+        sel_cmp    = (align_word(bus.adr) == IO_TIMER_CMP_ADDR);
+        sel_period = (align_word(bus.adr) == IO_TIMER_PERIOD_ADDR);
+        sel_status = (align_word(bus.adr) == IO_TIMER_STATUS_ADDR);
     end
 
     logic        ctrl_en;
@@ -76,15 +78,15 @@ module timer_mmio
         end
         else begin
             // MMIO writes
-            if (bus.wen && (|bus.wstrb)) begin
+            if (bus.cyc && bus.stb && bus.we && (|bus.sel)) begin
                 if (sel_ctrl) begin
-                    ctrl_en       <= bus.wdata[0];
-                    ctrl_armed    <= bus.wdata[1];
-                    ctrl_periodic <= bus.wdata[2];
-                    ctrl_presc_en <= bus.wdata[3];
-                    ctrl_irq_en   <= bus.wdata[8];
+                    ctrl_en       <= bus.dat_w[0];
+                    ctrl_armed    <= bus.dat_w[1];
+                    ctrl_periodic <= bus.dat_w[2];
+                    ctrl_presc_en <= bus.dat_w[3];
+                    ctrl_irq_en   <= bus.dat_w[8];
 
-                    if (bus.wdata[31]) begin
+                    if (bus.dat_w[31]) begin
                         // 软复位：清除定时器状态与粘滞标志位。
                         ctrl_en       <= 1'b0;
                         ctrl_armed    <= 1'b0;
@@ -102,30 +104,30 @@ module timer_mmio
                 end
 
                 if (sel_presc) begin
-                    presc_reg <= bus.wdata;
+                    presc_reg <= bus.dat_w;
                     presc_cnt <= 32'd0;
                 end
 
                 if (sel_count) begin
-                    count_reg <= bus.wdata;
+                    count_reg <= bus.dat_w;
                 end
 
                 if (sel_period) begin
-                    period_reg <= bus.wdata;
+                    period_reg <= bus.dat_w;
                 end
 
                 if (sel_cmp) begin
-                    cmp_reg <= bus.wdata;
+                    cmp_reg <= bus.dat_w;
 
                     // 如果新写入的 CMP 已经落后于当前计数，则立即置位 pending。
-                    if (ctrl_en && ctrl_armed && (count_reg >= bus.wdata)) begin
+                    if (ctrl_en && ctrl_armed && (count_reg >= bus.dat_w)) begin
                         pending <= 1'b1;
                     end
                 end
 
                 if (sel_status) begin
                     // PENDING：写 1 清除（W1C）
-                    if (bus.wdata[0]) begin
+                    if (bus.dat_w[0]) begin
                         pending <= 1'b0;
                     end
                 end
@@ -165,30 +167,30 @@ module timer_mmio
 
     // ---------------- MMIO 读回 ----------------
     always_comb begin
-        bus.rdata = 32'b0;
+        bus.dat_r = 32'b0;
 
         if (sel_ctrl) begin
-            bus.rdata[0]  = ctrl_en;
-            bus.rdata[1]  = ctrl_armed;
-            bus.rdata[2]  = ctrl_periodic;
-            bus.rdata[3]  = ctrl_presc_en;
-            bus.rdata[8]  = ctrl_irq_en;
-            bus.rdata[31] = 1'b0;
+            bus.dat_r[0]  = ctrl_en;
+            bus.dat_r[1]  = ctrl_armed;
+            bus.dat_r[2]  = ctrl_periodic;
+            bus.dat_r[3]  = ctrl_presc_en;
+            bus.dat_r[8]  = ctrl_irq_en;
+            bus.dat_r[31] = 1'b0;
         end
         else if (sel_presc) begin
-            bus.rdata = presc_reg;
+            bus.dat_r = presc_reg;
         end
         else if (sel_count) begin
-            bus.rdata = count_reg;
+            bus.dat_r = count_reg;
         end
         else if (sel_cmp) begin
-            bus.rdata = cmp_reg;
+            bus.dat_r = cmp_reg;
         end
         else if (sel_period) begin
-            bus.rdata = period_reg;
+            bus.dat_r = period_reg;
         end
         else if (sel_status) begin
-            bus.rdata[0] = pending;
+            bus.dat_r[0] = pending;
         end
     end
     

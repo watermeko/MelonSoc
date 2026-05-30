@@ -29,7 +29,6 @@ static int ddr_wait_done(uint32_t limit) {
 }
 
 static int ddr_start_op(int is_write) {
-    // Clear sticky flags + trigger START in one write.
     uint32_t ctrl = (1u << DDR_CTRL_START_BIT) |
                     (1u << DDR_CTRL_CLR_DONE_BIT) |
                     (1u << DDR_CTRL_CLR_ERR_BIT);

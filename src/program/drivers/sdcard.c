@@ -1,197 +1,108 @@
 #include "sdcard.h"
-#include "spi.h"
 
-enum {
-    R1_IDLE = 0x01,
-    R1_OK = 0x00,
-};
+#define IO_BASE_ADDR      0x400000u
+#define IO_SD_CMD_ADDR    (IO_BASE_ADDR + 0x60u)
+#define IO_SD_ARG_ADDR    (IO_BASE_ADDR + 0x64u)
+#define IO_SD_CTRL_ADDR   (IO_BASE_ADDR + 0x68u)
+#define IO_SD_RESP0_ADDR  (IO_BASE_ADDR + 0x6Cu)
+#define IO_SD_DEBUG_ADDR  (IO_BASE_ADDR + 0x70u)
+#define IO_SD_DATA_ADDR   (IO_BASE_ADDR + 0x80u)
 
-enum {
-    CMD0 = 0x40 + 0,
-    CMD8 = 0x40 + 8,
-    CMD16 = 0x40 + 16,
-    CMD17 = 0x40 + 17,
-    CMD55 = 0x40 + 55,
-    CMD58 = 0x40 + 58,
-    ACMD41 = 0x40 + 41,
-};
+#define SD_CTRL_START     0x01u
+#define SD_CTRL_CLEAR     0x02u
+#define SD_CTRL_READ      0x08u
+#define SD_ST_BUSY        0x01u
+#define SD_ST_DONE        0x02u
+#define SD_ST_ERR         0x04u
 
-static int g_sd_inited;
-static int g_sd_sdhc;
 static uint8_t g_sd_err;
+static uint16_t g_rca;
+static uint32_t g_last_status;
+static uint32_t g_last_debug;
+static uint32_t g_last_resp;
 
-enum {
-    SD_E_NONE = 0x00,
-    SD_E_CMD0 = 0x01,
-    SD_E_CMD8 = 0x02,
-    SD_E_ACMD41 = 0x03,
-    SD_E_CMD58 = 0x04,
-    SD_E_CMD16 = 0x05,
-    SD_E_CMD17 = 0x06,
-    SD_E_TOKEN = 0x07,
-};
+static inline volatile uint32_t *reg32(uint32_t addr) {
+    return (volatile uint32_t *)addr;
+}
+
+static void sd_delay(void) {
+    for (volatile int wait = 0; wait < 10000; ++wait)
+        ;
+}
 
 uint8_t sdcard_last_error(void) {
     return g_sd_err;
 }
 
-static void sd_select(void) {
-    spi_set_cs(0);
+uint32_t sdcard_last_status(void) {
+    return g_last_status;
 }
 
-static void sd_deselect(void) {
-    spi_set_cs(1);
-    (void)spi_xfer(0xFF);
+uint32_t sdcard_last_debug(void) {
+    return g_last_debug;
 }
 
-static uint8_t sd_wait_r1(uint32_t tries) {
-    while (tries--) {
-        uint8_t r = spi_xfer(0xFF);
-        if (r != 0xFF)
-            return r;
+static int sd_cmd(uint32_t cmd, uint32_t arg, int read_block) {
+    sd_delay();
+    *reg32(IO_SD_CTRL_ADDR) = SD_CTRL_CLEAR;
+    *reg32(IO_SD_ARG_ADDR) = arg;
+    *reg32(IO_SD_CMD_ADDR) = cmd;
+    *reg32(IO_SD_CTRL_ADDR) = SD_CTRL_START | (read_block ? SD_CTRL_READ : 0u);
+
+    uint32_t timeout = 2000000u;
+    while (timeout--) {
+        uint32_t st = *reg32(IO_SD_CTRL_ADDR);
+        if (st & SD_ST_DONE) {
+            g_last_status = st;
+            g_last_debug = *reg32(IO_SD_DEBUG_ADDR);
+            g_last_resp = *reg32(IO_SD_RESP0_ADDR);
+            return (st & SD_ST_ERR) ? -1 : 0;
+        }
     }
-    return 0xFF;
-}
-
-static int sd_send_cmd(uint8_t cmd, uint32_t arg, uint8_t crc, uint8_t *r1_out) {
-    (void)spi_xfer(0xFF);
-
-    (void)spi_xfer(cmd);
-    (void)spi_xfer((uint8_t)(arg >> 24));
-    (void)spi_xfer((uint8_t)(arg >> 16));
-    (void)spi_xfer((uint8_t)(arg >> 8));
-    (void)spi_xfer((uint8_t)(arg >> 0));
-    (void)spi_xfer(crc);
-
-    uint8_t r1 = sd_wait_r1(0xFFFFu);
-    if (r1_out)
-        *r1_out = r1;
-    return (r1 == 0xFF) ? -1 : 0;
-}
-
-static int sd_send_acmd41(int hcs, uint8_t *r1_out) {
-    uint8_t r1;
-    if (sd_send_cmd(CMD55, 0, 0xFF, &r1) != 0)
-        return -1;
-    if (r1 > 1)
-        return -1;
-    return sd_send_cmd(ACMD41, hcs ? 0x40000000u : 0u, 0xFF, r1_out);
+    g_last_status = *reg32(IO_SD_CTRL_ADDR);
+    g_last_debug = *reg32(IO_SD_DEBUG_ADDR);
+    g_last_resp = *reg32(IO_SD_RESP0_ADDR);
+    return -1;
 }
 
 int sdcard_init(void) {
-    if (g_sd_inited)
-        return 0;
+    g_sd_err = 0;
 
-    g_sd_sdhc = 0;
-    g_sd_err = SD_E_NONE;
+    (void)sd_cmd(0, 0, 0);
+    if (sd_cmd(8, 0x000001AAu, 0) != 0) { g_sd_err = 8; return -1; }
 
-    // Put card into SPI mode: >= 74 clocks with CS high.
-    spi_set_cs(1);
-    for (int i = 0; i < 10; ++i)
-        (void)spi_xfer(0xFF);
-
-    sd_select();
-
-    uint8_t r1;
-    if (sd_send_cmd(CMD0, 0, 0x95, &r1) != 0 || r1 != R1_IDLE) {
-        g_sd_err = SD_E_CMD0;
-        sd_deselect();
-        return -1;
-    }
-
-    int sd_v2 = 0;
-    if (sd_send_cmd(CMD8, 0x000001AAu, 0x87, &r1) == 0 && r1 == R1_IDLE) {
-        uint8_t r7[4];
-        r7[0] = spi_xfer(0xFF);
-        r7[1] = spi_xfer(0xFF);
-        r7[2] = spi_xfer(0xFF);
-        r7[3] = spi_xfer(0xFF);
-        sd_v2 = (r7[2] == 0x01) && (r7[3] == 0xAA);
-    } else {
-        sd_v2 = 0;
-    }
-
-    // Init loop.
-    uint32_t tries = 2000u;
-    do {
-        if (sd_send_acmd41(sd_v2, &r1) != 0) {
-            g_sd_err = SD_E_ACMD41;
-            sd_deselect();
-            return -1;
-        }
-        if (r1 == R1_OK)
+    for (uint32_t i = 0; i < 1000; ++i) {
+        if (sd_cmd(55, 0, 0) != 0) { g_sd_err = 55; return -1; }
+        if (sd_cmd(41, 0x40300000u, 0) != 0) { g_sd_err = 41; return -1; }
+        if (g_last_resp & 0x80000000u)
             break;
-    } while (tries--);
-
-    if (r1 != R1_OK) {
-        g_sd_err = SD_E_ACMD41;
-        sd_deselect();
-        return -1;
     }
+    if ((g_last_resp & 0x80000000u) == 0) { g_sd_err = 41; return -1; }
 
-    // Read OCR to determine SDHC/SDXC.
-    if (sd_send_cmd(CMD58, 0, 0xFF, &r1) != 0 || r1 != R1_OK) {
-        g_sd_err = SD_E_CMD58;
-        sd_deselect();
-        return -1;
-    }
-    uint8_t ocr0 = spi_xfer(0xFF);
-    (void)spi_xfer(0xFF);
-    (void)spi_xfer(0xFF);
-    (void)spi_xfer(0xFF);
-    g_sd_sdhc = (ocr0 & 0x40) ? 1 : 0;
+    if (sd_cmd(2, 0, 0) != 0) { g_sd_err = 2; return -1; }
+    if (sd_cmd(3, 0, 0) != 0) { g_sd_err = 3; return -1; }
+    g_rca = (uint16_t)(g_last_resp >> 16);
+    if (g_rca == 0) { g_sd_err = 3; return -1; }
+    if (sd_cmd(7, (uint32_t)g_rca << 16, 0) != 0) { g_sd_err = 7; return -1; }
+    if (sd_cmd(16, 512, 0) != 0) { g_sd_err = 16; return -1; }
 
-    if (!g_sd_sdhc) {
-        // SDSC: set block length to 512.
-        if (sd_send_cmd(CMD16, 512u, 0xFF, &r1) != 0 || r1 != R1_OK) {
-            g_sd_err = SD_E_CMD16;
-            sd_deselect();
-            return -1;
-        }
-    }
-
-    sd_deselect();
-    g_sd_inited = 1;
-    g_sd_err = SD_E_NONE;
     return 0;
 }
 
 int sdcard_read_block(uint32_t lba, uint8_t out512[512]) {
-    if (sdcard_init() != 0)
-        return -1;
-
-    uint32_t arg = g_sd_sdhc ? lba : (lba * 512u);
-
-    sd_select();
-
-    uint8_t r1;
-    if (sd_send_cmd(CMD17, arg, 0xFF, &r1) != 0 || r1 != R1_OK) {
-        g_sd_err = SD_E_CMD17;
-        sd_deselect();
+    if (sd_cmd(17, lba, 1) != 0) {
+        g_sd_err = 17;
         return -1;
     }
+    sd_delay();
 
-    // Wait for data token 0xFE.
-    uint32_t tries = 0xFFFFu;
-    uint8_t token;
-    do {
-        token = spi_xfer(0xFF);
-        if (token == 0xFE)
-            break;
-    } while (tries--);
-
-    if (token != 0xFE) {
-        g_sd_err = SD_E_TOKEN;
-        sd_deselect();
-        return -1;
+    for (uint32_t i = 0; i < 128; ++i) {
+        uint32_t w = reg32(IO_SD_DATA_ADDR)[i];
+        out512[i * 4u + 0u] = (uint8_t)(w >> 24);
+        out512[i * 4u + 1u] = (uint8_t)(w >> 16);
+        out512[i * 4u + 2u] = (uint8_t)(w >> 8);
+        out512[i * 4u + 3u] = (uint8_t)w;
     }
-
-    for (int i = 0; i < 512; ++i)
-        out512[i] = spi_xfer(0xFF);
-    (void)spi_xfer(0xFF);
-    (void)spi_xfer(0xFF);
-
-    sd_deselect();
-    g_sd_err = SD_E_NONE;
+    g_sd_err = 0;
     return 0;
 }

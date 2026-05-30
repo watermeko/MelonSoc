@@ -3,6 +3,9 @@
 `include "core/cpu.sv"
 `include "core/mem.sv"
 `include "include/peripherals.sv"
+`ifdef BENCH
+`include "../sim/sd_fake.v"
+`endif
 module SOC (
         input  logic clk,
         input  logic ddr_app_clk,
@@ -18,8 +21,10 @@ module SOC (
         output logic spi_sck,
         output logic spi_mosi,
         input  logic spi_miso,
+        output logic sdclk,
+        inout  tri   sdcmd,
+        inout  tri [3:0] sddat,
 
-        // DDR3 APP 接口（对接 Gowin DDR3_Memory_Interface_Top）
         output logic [27:0] ddr_app_addr,
         output logic        ddr_app_cmd_en,
         output logic [2:0]  ddr_app_cmd,
@@ -39,19 +44,22 @@ module SOC (
     );
     import soc_pkg::*;
 
-    // 指令，数据，外设总线
-    imem_if       instr_bus();
-    simple_bus_if cpu_data_bus();
-    simple_bus_if ram_bus();
-    simple_bus_if mmio_bus();
+    imem_if instr_bus();
+    imem_if instr_rom_bus();
+    wb_if cpu_data_bus();
+    wb_if ram_bus();
+    wb_if mmio_bus();
+    wb_if ddr_bus();
+    wb_if ddr_data_bus();
+    wb_if ddr_instr_bus();
 
-    simple_bus_if mmio_gpio_bus();
-    simple_bus_if mmio_uart_bus();
-    simple_bus_if mmio_i2c_bus();
-    simple_bus_if mmio_timer_bus();
-    simple_bus_if mmio_spi_bus();
-    simple_bus_if mmio_ddr_bus();
-    simple_bus_if mmio_clint_bus();
+    wb_if mmio_gpio_bus();
+    wb_if mmio_uart_bus();
+    wb_if mmio_i2c_bus();
+    wb_if mmio_timer_bus();
+    wb_if mmio_spi_bus();
+    wb_if mmio_sd_bus();
+    wb_if mmio_clint_bus();
 
     cpu u_cpu (
             .clk(clk),
@@ -65,257 +73,406 @@ module SOC (
 
     mem u_mem (
             .clk(clk),
-            .instr(instr_bus),
+            .instr(instr_rom_bus),
             .data(ram_bus)
         );
 
-    logic data_req_any;
-    logic data_is_mmio;
-    logic data_is_mmio_q;
-
+    logic instr_is_ddr;
+    logic instr_ddr_pending;
+    logic [31:0] instr_ddr_addr;
+    logic [31:0] instr_ddr_rdata_q;
     always_comb begin
-        data_req_any = cpu_data_bus.ren || cpu_data_bus.wen;
-        data_is_mmio = is_mmio_region(cpu_data_bus.addr);
+        instr_is_ddr = is_ddr_region(instr_bus.addr);
+
+        instr_rom_bus.addr = instr_bus.addr;
+        instr_rom_bus.ren = instr_bus.ren && !instr_is_ddr;
+        instr_bus.rdata = instr_is_ddr ? instr_ddr_rdata_q : instr_rom_bus.rdata;
+        instr_bus.stall = instr_is_ddr ?
+                          !(ddr_instr_bus.ack && instr_ddr_pending && (instr_bus.addr == instr_ddr_addr)) :
+                          instr_rom_bus.stall;
+
+        ddr_instr_bus.adr = instr_ddr_pending ? instr_ddr_addr : instr_bus.addr;
+        ddr_instr_bus.dat_w = 32'b0;
+        ddr_instr_bus.sel = 4'b1111;
+        ddr_instr_bus.we = 1'b0;
+        ddr_instr_bus.cyc = instr_ddr_pending || (instr_bus.ren && instr_is_ddr);
+        ddr_instr_bus.stb = ddr_instr_bus.cyc;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            data_is_mmio_q <= 1'b0;
+            instr_ddr_pending <= 1'b0;
+            instr_ddr_addr <= 32'b0;
+            instr_ddr_rdata_q <= 32'b0;
         end
-        else if (data_req_any) begin
-            data_is_mmio_q <= data_is_mmio;
+        else if (ddr_instr_bus.ack) begin
+            instr_ddr_pending <= 1'b0;
+            instr_ddr_rdata_q <= ddr_instr_bus.dat_r;
+        end
+        else if (!instr_ddr_pending && instr_bus.ren && instr_is_ddr) begin
+            instr_ddr_pending <= 1'b1;
+            instr_ddr_addr <= instr_bus.addr;
         end
     end
 
-    // 内存&外设映射
+    logic data_is_mmio;
+    logic data_is_ddr;
+    logic data_is_ram;
+    logic data_unmapped;
+    logic [31:0] cpu_data_rdata_mux;
+    logic [31:0] cpu_data_rdata_q;
     always_comb begin
-        ram_bus.addr  = cpu_data_bus.addr;
-        ram_bus.ren   = cpu_data_bus.ren & ~data_is_mmio;
-        ram_bus.wen   = cpu_data_bus.wen & ~data_is_mmio;
-        ram_bus.wdata = cpu_data_bus.wdata;
-        ram_bus.wstrb = cpu_data_bus.wstrb & {4{~data_is_mmio}};
+        data_is_mmio = is_mmio_region(cpu_data_bus.adr);
+        data_is_ddr = is_ddr_region(cpu_data_bus.adr);
+        data_is_ram = !data_is_mmio && !data_is_ddr;
+        data_unmapped = cpu_data_bus.cyc && cpu_data_bus.stb && !data_is_mmio && !data_is_ddr &&
+                        (cpu_data_bus.adr[31:16] != 16'h0001);
 
-        mmio_bus.addr  = cpu_data_bus.addr;
-        mmio_bus.ren   = cpu_data_bus.ren & data_is_mmio;
-        mmio_bus.wen   = cpu_data_bus.wen & data_is_mmio;
-        mmio_bus.wdata = cpu_data_bus.wdata;
-        mmio_bus.wstrb = cpu_data_bus.wstrb & {4{data_is_mmio}};
+        ram_bus.adr   = cpu_data_bus.adr;
+        ram_bus.dat_w = cpu_data_bus.dat_w;
+        ram_bus.sel   = cpu_data_bus.sel;
+        ram_bus.we    = cpu_data_bus.we;
+        ram_bus.cyc   = cpu_data_bus.cyc && data_is_ram && !data_unmapped;
+        ram_bus.stb   = cpu_data_bus.stb && data_is_ram && !data_unmapped;
 
-        cpu_data_bus.rdata = data_is_mmio_q ? mmio_bus.rdata : ram_bus.rdata;
+        mmio_bus.adr   = cpu_data_bus.adr;
+        mmio_bus.dat_w = cpu_data_bus.dat_w;
+        mmio_bus.sel   = cpu_data_bus.sel;
+        mmio_bus.we    = cpu_data_bus.we;
+        mmio_bus.cyc   = cpu_data_bus.cyc && data_is_mmio;
+        mmio_bus.stb   = cpu_data_bus.stb && data_is_mmio;
+
+        ddr_data_bus.adr   = cpu_data_bus.adr;
+        ddr_data_bus.dat_w = cpu_data_bus.dat_w;
+        ddr_data_bus.sel   = cpu_data_bus.sel;
+        ddr_data_bus.we    = cpu_data_bus.we;
+        ddr_data_bus.cyc   = cpu_data_bus.cyc && data_is_ddr;
+        ddr_data_bus.stb   = cpu_data_bus.stb && data_is_ddr;
+
+        unique case (1'b1)
+            data_is_mmio: begin
+                cpu_data_rdata_mux = mmio_bus.dat_r;
+                cpu_data_bus.ack = mmio_bus.ack;
+                cpu_data_bus.stall = mmio_bus.stall;
+            end
+            data_is_ddr: begin
+                cpu_data_rdata_mux = ddr_data_bus.dat_r;
+                cpu_data_bus.ack = ddr_data_bus.ack;
+                cpu_data_bus.stall = ddr_data_bus.stall;
+            end
+            data_unmapped: begin
+                cpu_data_rdata_mux = 32'b0;
+                cpu_data_bus.ack = cpu_data_bus.cyc && cpu_data_bus.stb;
+                cpu_data_bus.stall = 1'b0;
+            end
+            default: begin
+                cpu_data_rdata_mux = ram_bus.dat_r;
+                cpu_data_bus.ack = ram_bus.ack;
+                cpu_data_bus.stall = ram_bus.stall;
+            end
+        endcase
+
+        cpu_data_bus.dat_r = cpu_data_rdata_q;
     end
 
-    // MMIO解码
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cpu_data_rdata_q <= 32'b0;
+        end
+        else if (cpu_data_bus.cyc && cpu_data_bus.stb && cpu_data_bus.ack) begin
+            cpu_data_rdata_q <= cpu_data_rdata_mux;
+        end
+    end
+
     logic sel_leds;
     logic sel_uart;
     logic sel_i2c;
     logic sel_timer;
     logic sel_spi;
-    logic sel_ddr;
+    logic sel_sd;
     logic sel_clint;
 
     always_comb begin
-        sel_leds = (align_word(mmio_bus.addr) == IO_LEDS_ADDR);
-        sel_uart = (align_word(mmio_bus.addr) == IO_UART_DAT_ADDR) ||
-                 (align_word(mmio_bus.addr) == IO_UART_CTRL_ADDR);
-        sel_i2c  = (align_word(mmio_bus.addr) == IO_I2C_TXRX_ADDR) ||
-                 (align_word(mmio_bus.addr) == IO_I2C_CMD_ADDR) ||
-                 (align_word(mmio_bus.addr) == IO_I2C_STATUS_ADDR) ||
-                 (align_word(mmio_bus.addr) == IO_I2C_DIV_ADDR);
-        sel_timer = (align_word(mmio_bus.addr) == IO_TIMER_CTRL_ADDR) ||
-                  (align_word(mmio_bus.addr) == IO_TIMER_PRESC_ADDR) ||
-                  (align_word(mmio_bus.addr) == IO_TIMER_COUNT_ADDR) ||
-                  (align_word(mmio_bus.addr) == IO_TIMER_CMP_ADDR) ||
-                  (align_word(mmio_bus.addr) == IO_TIMER_PERIOD_ADDR) ||
-                  (align_word(mmio_bus.addr) == IO_TIMER_STATUS_ADDR);
-        sel_spi = (align_word(mmio_bus.addr) == IO_SPI_TXRX_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_SPI_CTRL_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_SPI_STATUS_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_SPI_DIV_ADDR);
+        sel_leds = (align_word(mmio_bus.adr) == IO_LEDS_ADDR);
+        sel_uart = (align_word(mmio_bus.adr) == IO_UART_DAT_ADDR) ||
+                   (align_word(mmio_bus.adr) == IO_UART_CTRL_ADDR);
+        sel_i2c  = (align_word(mmio_bus.adr) == IO_I2C_TXRX_ADDR) ||
+                   (align_word(mmio_bus.adr) == IO_I2C_CMD_ADDR) ||
+                   (align_word(mmio_bus.adr) == IO_I2C_STATUS_ADDR) ||
+                   (align_word(mmio_bus.adr) == IO_I2C_DIV_ADDR);
+        sel_timer = (align_word(mmio_bus.adr) == IO_TIMER_CTRL_ADDR) ||
+                    (align_word(mmio_bus.adr) == IO_TIMER_PRESC_ADDR) ||
+                    (align_word(mmio_bus.adr) == IO_TIMER_COUNT_ADDR) ||
+                    (align_word(mmio_bus.adr) == IO_TIMER_CMP_ADDR) ||
+                    (align_word(mmio_bus.adr) == IO_TIMER_PERIOD_ADDR) ||
+                    (align_word(mmio_bus.adr) == IO_TIMER_STATUS_ADDR);
+        sel_spi = (align_word(mmio_bus.adr) == IO_SPI_TXRX_ADDR) ||
+                  (align_word(mmio_bus.adr) == IO_SPI_CTRL_ADDR) ||
+                  (align_word(mmio_bus.adr) == IO_SPI_STATUS_ADDR) ||
+                  (align_word(mmio_bus.adr) == IO_SPI_DIV_ADDR);
+        sel_sd = (align_word(mmio_bus.adr) == IO_SD_CMD_ADDR) ||
+                 (align_word(mmio_bus.adr) == IO_SD_ARG_ADDR) ||
+                 (align_word(mmio_bus.adr) == IO_SD_CTRL_ADDR) ||
+                 (align_word(mmio_bus.adr) == IO_SD_RESP0_ADDR) ||
+                 (align_word(mmio_bus.adr) == IO_SD_DEBUG_ADDR) ||
+                 ((align_word(mmio_bus.adr) >= IO_SD_DATA_ADDR) &&
+                  (align_word(mmio_bus.adr) < (IO_SD_DATA_ADDR + 32'd512)));
+        sel_clint = (align_word(mmio_bus.adr) == IO_CLINT_MSIP_ADDR) ||
+                    (align_word(mmio_bus.adr) == IO_CLINT_MTIMECMP_ADDR) ||
+                    (align_word(mmio_bus.adr) == (IO_CLINT_MTIMECMP_ADDR + 4)) ||
+                    (align_word(mmio_bus.adr) == IO_CLINT_MTIME_ADDR) ||
+                    (align_word(mmio_bus.adr) == (IO_CLINT_MTIME_ADDR + 4));
 
-        sel_ddr = (align_word(mmio_bus.addr) == IO_DDR_CTRL_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_STATUS_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_ADDR_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_BURST_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_WDATA0_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_WDATA1_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_WDATA2_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_WDATA3_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_RDATA0_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_RDATA1_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_RDATA2_ADDR) ||
-                (align_word(mmio_bus.addr) == IO_DDR_RDATA3_ADDR);
+        mmio_gpio_bus.adr   = mmio_bus.adr;
+        mmio_gpio_bus.dat_w = mmio_bus.dat_w;
+        mmio_gpio_bus.sel   = mmio_bus.sel;
+        mmio_gpio_bus.we    = mmio_bus.we;
+        mmio_gpio_bus.cyc   = mmio_bus.cyc && sel_leds;
+        mmio_gpio_bus.stb   = mmio_bus.stb && sel_leds;
 
-        sel_clint = (align_word(mmio_bus.addr) == IO_CLINT_MSIP_ADDR) ||
-                  (align_word(mmio_bus.addr) == IO_CLINT_MTIMECMP_ADDR) ||
-                  (align_word(mmio_bus.addr) == (IO_CLINT_MTIMECMP_ADDR + 4)) ||
-                  (align_word(mmio_bus.addr) == IO_CLINT_MTIME_ADDR) ||
-                  (align_word(mmio_bus.addr) == (IO_CLINT_MTIME_ADDR + 4));
+        mmio_uart_bus.adr   = mmio_bus.adr;
+        mmio_uart_bus.dat_w = mmio_bus.dat_w;
+        mmio_uart_bus.sel   = mmio_bus.sel;
+        mmio_uart_bus.we    = mmio_bus.we;
+        mmio_uart_bus.cyc   = mmio_bus.cyc && sel_uart;
+        mmio_uart_bus.stb   = mmio_bus.stb && sel_uart;
 
-        mmio_gpio_bus.addr  = mmio_bus.addr;
-        mmio_gpio_bus.ren   = mmio_bus.ren & sel_leds;
-        mmio_gpio_bus.wen   = mmio_bus.wen & sel_leds;
-        mmio_gpio_bus.wdata = mmio_bus.wdata;
-        mmio_gpio_bus.wstrb = mmio_bus.wstrb;
+        mmio_i2c_bus.adr   = mmio_bus.adr;
+        mmio_i2c_bus.dat_w = mmio_bus.dat_w;
+        mmio_i2c_bus.sel   = mmio_bus.sel;
+        mmio_i2c_bus.we    = mmio_bus.we;
+        mmio_i2c_bus.cyc   = mmio_bus.cyc && sel_i2c;
+        mmio_i2c_bus.stb   = mmio_bus.stb && sel_i2c;
 
-        mmio_uart_bus.addr  = mmio_bus.addr;
-        mmio_uart_bus.ren   = mmio_bus.ren & sel_uart;
-        mmio_uart_bus.wen   = mmio_bus.wen & sel_uart;
-        mmio_uart_bus.wdata = mmio_bus.wdata;
-        mmio_uart_bus.wstrb = mmio_bus.wstrb;
+        mmio_timer_bus.adr   = mmio_bus.adr;
+        mmio_timer_bus.dat_w = mmio_bus.dat_w;
+        mmio_timer_bus.sel   = mmio_bus.sel;
+        mmio_timer_bus.we    = mmio_bus.we;
+        mmio_timer_bus.cyc   = mmio_bus.cyc && sel_timer;
+        mmio_timer_bus.stb   = mmio_bus.stb && sel_timer;
 
-        mmio_i2c_bus.addr  = mmio_bus.addr;
-        mmio_i2c_bus.ren   = mmio_bus.ren & sel_i2c;
-        mmio_i2c_bus.wen   = mmio_bus.wen & sel_i2c;
-        mmio_i2c_bus.wdata = mmio_bus.wdata;
-        mmio_i2c_bus.wstrb = mmio_bus.wstrb;
+        mmio_spi_bus.adr   = mmio_bus.adr;
+        mmio_spi_bus.dat_w = mmio_bus.dat_w;
+        mmio_spi_bus.sel   = mmio_bus.sel;
+        mmio_spi_bus.we    = mmio_bus.we;
+        mmio_spi_bus.cyc   = mmio_bus.cyc && sel_spi;
+        mmio_spi_bus.stb   = mmio_bus.stb && sel_spi;
 
-        mmio_timer_bus.addr  = mmio_bus.addr;
-        mmio_timer_bus.ren   = mmio_bus.ren & sel_timer;
-        mmio_timer_bus.wen   = mmio_bus.wen & sel_timer;
-        mmio_timer_bus.wdata = mmio_bus.wdata;
-        mmio_timer_bus.wstrb = mmio_bus.wstrb;
+        mmio_sd_bus.adr   = mmio_bus.adr;
+        mmio_sd_bus.dat_w = mmio_bus.dat_w;
+        mmio_sd_bus.sel   = mmio_bus.sel;
+        mmio_sd_bus.we    = mmio_bus.we;
+        mmio_sd_bus.cyc   = mmio_bus.cyc && sel_sd;
+        mmio_sd_bus.stb   = mmio_bus.stb && sel_sd;
 
-        mmio_spi_bus.addr  = mmio_bus.addr;
-        mmio_spi_bus.ren   = mmio_bus.ren & sel_spi;
-        mmio_spi_bus.wen   = mmio_bus.wen & sel_spi;
-        mmio_spi_bus.wdata = mmio_bus.wdata;
-        mmio_spi_bus.wstrb = mmio_bus.wstrb;
+        mmio_clint_bus.adr   = mmio_bus.adr;
+        mmio_clint_bus.dat_w = mmio_bus.dat_w;
+        mmio_clint_bus.sel   = mmio_bus.sel;
+        mmio_clint_bus.we    = mmio_bus.we;
+        mmio_clint_bus.cyc   = mmio_bus.cyc && sel_clint;
+        mmio_clint_bus.stb   = mmio_bus.stb && sel_clint;
 
-        mmio_ddr_bus.addr  = mmio_bus.addr;
-        mmio_ddr_bus.ren   = mmio_bus.ren & sel_ddr;
-        mmio_ddr_bus.wen   = mmio_bus.wen & sel_ddr;
-        mmio_ddr_bus.wdata = mmio_bus.wdata;
-        mmio_ddr_bus.wstrb = mmio_bus.wstrb;
+        mmio_bus.ack = mmio_bus.cyc && mmio_bus.stb;
+        mmio_bus.stall = 1'b0;
 
-        mmio_clint_bus.addr  = mmio_bus.addr;
-        mmio_clint_bus.ren   = mmio_bus.ren & sel_clint;
-        mmio_clint_bus.wen   = mmio_bus.wen & sel_clint;
-        mmio_clint_bus.wdata = mmio_bus.wdata;
-        mmio_clint_bus.wstrb = mmio_bus.wstrb;
+        unique case (1'b1)
+            sel_leds: begin
+                mmio_bus.dat_r = mmio_gpio_bus.dat_r;
+            end
+            sel_uart: begin
+                mmio_bus.dat_r = mmio_uart_bus.dat_r;
+            end
+            sel_i2c: begin
+                mmio_bus.dat_r = mmio_i2c_bus.dat_r;
+            end
+            sel_timer: begin
+                mmio_bus.dat_r = mmio_timer_bus.dat_r;
+            end
+            sel_spi: begin
+                mmio_bus.dat_r = mmio_spi_bus.dat_r;
+            end
+            sel_sd: begin
+                mmio_bus.dat_r = mmio_sd_bus.dat_r;
+            end
+            sel_clint: begin
+                mmio_bus.dat_r = mmio_clint_bus.dat_r;
+            end
+            default: begin
+                mmio_bus.dat_r = 32'b0;
+            end
+        endcase
     end
 
-    gpio_mmio #(
-                  .LEDS_W(6)
-              ) u_gpio_mmio (
-                  .clk(clk),
-                  .rst_n(rst_n),
-                  .bus(mmio_gpio_bus),
-                  .leds(leds)
-              );
+    gpio_mmio #(.LEDS_W(6)) u_gpio_mmio (
+        .clk(clk),
+        .rst_n(rst_n),
+        .bus(mmio_gpio_bus),
+        .leds(leds)
+    );
 
     uart_mmio u_uart_mmio (
-                  .clk(clk),
-                  .rst_n(rst_n),
-                  .rxd(rxd),
-                  .txd(txd),
-                  .bus(mmio_uart_bus)
-              );
+        .clk(clk),
+        .rst_n(rst_n),
+        .rxd(rxd),
+        .txd(txd),
+        .bus(mmio_uart_bus)
+    );
 
     i2c_mmio u_i2c_mmio (
-                 .clk(clk),
-                 .rst_n(rst_n),
-                 .bus(mmio_i2c_bus),
-                 .sda(i2c_sda),
-                 .scl(i2c_scl)
-             );
+        .clk(clk),
+        .rst_n(rst_n),
+        .bus(mmio_i2c_bus),
+        .sda(i2c_sda),
+        .scl(i2c_scl)
+    );
 
-    
     logic timer_irq;
     timer_mmio u_timer_mmio (
-                   .clk(clk),
-                   .rst_n(rst_n),
-                   .timer_irq(timer_irq),
-                   .bus(mmio_timer_bus)
-               );
+        .clk(clk),
+        .rst_n(rst_n),
+        .timer_irq(timer_irq),
+        .bus(mmio_timer_bus)
+    );
 
     logic clint_timer_irq;
     logic clint_sw_irq;
     clint u_clint (
-              .clk(clk),
-              .rst_n(rst_n),
-              .timer_irq(clint_timer_irq),
-              .sw_irq(clint_sw_irq),
-              .bus(mmio_clint_bus)
-          );
+        .clk(clk),
+        .rst_n(rst_n),
+        .timer_irq(clint_timer_irq),
+        .sw_irq(clint_sw_irq),
+        .bus(mmio_clint_bus)
+    );
 
     spi_mmio u_spi_mmio (
-                 .clk(clk),
-                 .rst_n(rst_n),
-                 .bus(mmio_spi_bus),
-                 .spi_cs_n(spi_cs_n),
-                 .spi_sck(spi_sck),
-                 .spi_mosi(spi_mosi),
-                 .spi_miso(spi_miso)
-             );
+        .clk(clk),
+        .rst_n(rst_n),
+        .bus(mmio_spi_bus),
+        .spi_cs_n(spi_cs_n),
+        .spi_sck(spi_sck),
+        .spi_mosi(spi_mosi),
+        .spi_miso(spi_miso)
+    );
 
-    ddr3_app_mmio u_ddr3_app_mmio (
-                     .clk(clk),
-                     .app_clk(ddr_app_clk),
-                     .rst_n(rst_n),
-                     .bus(mmio_ddr_bus),
-
-                     .app_addr(ddr_app_addr),
-                     .app_cmd_en(ddr_app_cmd_en),
-                     .app_cmd(ddr_app_cmd),
-                     .app_cmd_rdy(ddr_app_cmd_rdy),
-
-                     .app_wren(ddr_app_wren),
-                     .app_data_end(ddr_app_data_end),
-                     .app_data(ddr_app_data),
-                     .app_data_rdy(ddr_app_data_rdy),
-
-                     .app_rdata_valid(ddr_app_rdata_valid),
-                     .app_rdata_end(ddr_app_rdata_end),
-                     .app_rdata(ddr_app_rdata),
-
-                     .init_calib_complete(ddr_init_calib_complete),
-                     .app_burst_number(ddr_app_burst_number)
-                 );
-
-    logic [31:0] mmio_rdata_comb;
-    logic [31:0] mmio_rdata_q;
-
-    always_comb begin
-        unique case (1'b1)
-                   sel_leds:
-                       mmio_rdata_comb = mmio_gpio_bus.rdata;
-                   sel_uart:
-                       mmio_rdata_comb = mmio_uart_bus.rdata;
-                   sel_i2c:
-                       mmio_rdata_comb = mmio_i2c_bus.rdata;
-                   sel_timer:
-                       mmio_rdata_comb = mmio_timer_bus.rdata;
-                   sel_spi:
-                       mmio_rdata_comb = mmio_spi_bus.rdata;
-                   sel_ddr:
-                       mmio_rdata_comb = mmio_ddr_bus.rdata;
-                   sel_clint:
-                       mmio_rdata_comb = mmio_clint_bus.rdata;
-                   default:
-                       mmio_rdata_comb = 32'b0;
-               endcase
-           end
-
-           always_ff @(posedge clk or negedge rst_n) begin
-               if (!rst_n) begin
-                   mmio_rdata_q <= 32'b0;
-               end
-               else if (mmio_bus.ren) begin
-                   mmio_rdata_q <= mmio_rdata_comb;
-               end
-           end
-
-           always_comb begin
-               mmio_bus.rdata = mmio_rdata_q;
-           end
+    sdhost_mmio u_sdhost_mmio (
+        .clk(clk),
+        .rst_n(rst_n),
+        .bus(mmio_sd_bus),
+        .sdclk(sdclk),
+        .sdcmd(sdcmd),
+        .sddat(sddat)
+    );
 
 `ifdef BENCH
-           // Convenient UART output tap for simulation.
-           always_ff @(posedge clk) begin
-               if (mmio_bus.wen && (align_word(mmio_bus.addr) == IO_UART_DAT_ADDR)) begin
-                   $write("%c", mmio_bus.wdata[7:0]);
-               end
-           end
+    logic sd_rdreq;
+    logic [39:0] sd_rdaddr;
+    logic [15:0] sd_rddata;
+    logic [15:0] sd_image [0:1048575];
+
+    assign sd_rddata = sd_image[sd_rdaddr[19:0]];
+
+    sd_fake u_sd_fake (
+        .rstn_async(rst_n),
+        .sdclk(sdclk),
+        .sdcmd(sdcmd),
+        .sddat(sddat),
+        .rdreq(sd_rdreq),
+        .rdaddr(sd_rdaddr),
+        .rddata(sd_rddata),
+        .show_status_bits(),
+        .show_sdcmd_en(),
+        .show_sdcmd_cmd(),
+        .show_sdcmd_arg()
+    );
+
+    initial begin
+        $readmemh("build/sd_image.hex", sd_image);
+    end
+`endif
+
+    logic ddr_owner_valid;
+    logic ddr_owner_is_data;
+    logic ddr_select_data;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ddr_owner_valid <= 1'b0;
+            ddr_owner_is_data <= 1'b0;
+        end
+        else if (ddr_owner_valid) begin
+            if (ddr_bus.ack)
+                ddr_owner_valid <= 1'b0;
+        end
+        else if (ddr_data_bus.cyc) begin
+            ddr_owner_valid <= 1'b1;
+            ddr_owner_is_data <= 1'b1;
+        end
+        else if (ddr_instr_bus.cyc) begin
+            ddr_owner_valid <= 1'b1;
+            ddr_owner_is_data <= 1'b0;
+        end
+    end
+
+    always_comb begin
+        ddr_select_data = ddr_owner_valid ? ddr_owner_is_data : ddr_data_bus.cyc;
+
+        if (ddr_select_data) begin
+            ddr_bus.adr = ddr_data_bus.adr;
+            ddr_bus.dat_w = ddr_data_bus.dat_w;
+            ddr_bus.sel = ddr_data_bus.sel;
+            ddr_bus.we = ddr_data_bus.we;
+            ddr_bus.cyc = ddr_data_bus.cyc;
+            ddr_bus.stb = ddr_data_bus.stb;
+            ddr_data_bus.dat_r = ddr_bus.dat_r;
+            ddr_data_bus.ack = ddr_bus.ack;
+            ddr_data_bus.stall = ddr_bus.stall;
+            ddr_instr_bus.dat_r = 32'b0;
+            ddr_instr_bus.ack = 1'b0;
+            ddr_instr_bus.stall = ddr_instr_bus.cyc;
+        end
+        else begin
+            ddr_bus.adr = ddr_instr_bus.adr;
+            ddr_bus.dat_w = ddr_instr_bus.dat_w;
+            ddr_bus.sel = ddr_instr_bus.sel;
+            ddr_bus.we = ddr_instr_bus.we;
+            ddr_bus.cyc = ddr_instr_bus.cyc;
+            ddr_bus.stb = ddr_instr_bus.stb;
+            ddr_instr_bus.dat_r = ddr_bus.dat_r;
+            ddr_instr_bus.ack = ddr_bus.ack;
+            ddr_instr_bus.stall = ddr_bus.stall;
+            ddr_data_bus.dat_r = 32'b0;
+            ddr_data_bus.ack = 1'b0;
+            ddr_data_bus.stall = ddr_data_bus.cyc;
+        end
+    end
+
+    ddr3_wb_bridge u_ddr3_wb_bridge (
+        .clk(clk),
+        .app_clk(ddr_app_clk),
+        .rst_n(rst_n),
+        .bus(ddr_bus),
+        .app_addr(ddr_app_addr),
+        .app_cmd_en(ddr_app_cmd_en),
+        .app_cmd(ddr_app_cmd),
+        .app_cmd_rdy(ddr_app_cmd_rdy),
+        .app_wren(ddr_app_wren),
+        .app_data_end(ddr_app_data_end),
+        .app_data(ddr_app_data),
+        .app_data_rdy(ddr_app_data_rdy),
+        .app_rdata_valid(ddr_app_rdata_valid),
+        .app_rdata_end(ddr_app_rdata_end),
+        .app_rdata(ddr_app_rdata),
+        .init_calib_complete(ddr_init_calib_complete),
+        .app_burst_number(ddr_app_burst_number)
+    );
+
+`ifdef BENCH
+    always_ff @(posedge clk) begin
+        if (mmio_uart_bus.cyc && mmio_uart_bus.stb && mmio_uart_bus.we &&
+            (align_word(mmio_uart_bus.adr) == IO_UART_DAT_ADDR)) begin
+            $write("%c", mmio_uart_bus.dat_w[7:0]);
+        end
+    end
 `endif
 
 endmodule

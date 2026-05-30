@@ -19,15 +19,17 @@ module clint (
     input  logic rst_n,
     output logic timer_irq,
     output logic sw_irq,
-    simple_bus_if.slave bus
+    wb_if.slave bus
 );
     import soc_pkg::*;
+    assign bus.ack = bus.cyc && bus.stb;
+    assign bus.stall = 1'b0;
 
     // ---- address decode (offset from CLINT base) ---------------------------
     logic [31:0] offset;
     logic sel_msip, sel_mtimecmp_lo, sel_mtimecmp_hi, sel_mtime_lo, sel_mtime_hi;
 
-    assign offset = bus.addr - IO_CLINT_BASE_ADDR;
+    assign offset = bus.adr - IO_CLINT_BASE_ADDR;
 
     always_comb begin
         sel_msip        = (offset == 32'h0000_0000);
@@ -44,8 +46,8 @@ module clint (
         if (!rst_n) begin
             msip_reg <= 1'b0;
         end else begin
-            if (bus.wen && (|bus.wstrb) && sel_msip) begin
-                msip_reg <= bus.wdata[0];
+            if (bus.cyc && bus.stb && bus.we && (|bus.sel) && sel_msip) begin
+                msip_reg <= bus.dat_w[0];
             end
         end
     end
@@ -63,28 +65,28 @@ module clint (
         end else begin
             mtime <= mtime + 64'd1;
 
-            if (bus.wen && (|bus.wstrb)) begin
+            if (bus.cyc && bus.stb && bus.we && (|bus.sel)) begin
                 if (sel_mtimecmp_lo)
-                    mtimecmp[31:0]  <= bus.wdata;
+                    mtimecmp[31:0]  <= bus.dat_w;
                 if (sel_mtimecmp_hi)
-                    mtimecmp[63:32] <= bus.wdata;
+                    mtimecmp[63:32] <= bus.dat_w;
             end
         end
     end
 
     // ---- read-data mux -----------------------------------------------------
     always_comb begin
-        bus.rdata = 32'b0;
+        bus.dat_r = 32'b0;
         if (sel_msip)
-            bus.rdata = {31'b0, msip_reg};
+            bus.dat_r = {31'b0, msip_reg};
         else if (sel_mtimecmp_lo)
-            bus.rdata = mtimecmp[31:0];
+            bus.dat_r = mtimecmp[31:0];
         else if (sel_mtimecmp_hi)
-            bus.rdata = mtimecmp[63:32];
+            bus.dat_r = mtimecmp[63:32];
         else if (sel_mtime_lo)
-            bus.rdata = mtime[31:0];
+            bus.dat_r = mtime[31:0];
         else if (sel_mtime_hi)
-            bus.rdata = mtime[63:32];
+            bus.dat_r = mtime[63:32];
     end
 
     // ---- interrupt generation ----------------------------------------------

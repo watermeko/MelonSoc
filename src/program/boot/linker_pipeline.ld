@@ -40,3 +40,4 @@ SECTIONS {
 }
 
 PROVIDE(__global_pointer$ = ORIGIN(DATARAM) + 0x800);
+ASSERT(SIZEOF(.rodata) + SIZEOF(.data) <= 0x2000, "Shell .rodata/.data exceed reserved 8KB DATARAM prefix")

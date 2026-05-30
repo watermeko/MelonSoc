@@ -53,27 +53,21 @@ TARGET_NAME = program
 _S = program/boot/$(TARGET_NAME).s
 _C_SOURCES = program/utils/print.c \
              program/app/main.c \
-             program/drivers/uart.c \
+             program/boot/fatboot.c \
+             program/drivers/ddr.c \
              program/drivers/gpio.c \
              program/drivers/i2c.c \
-             program/drivers/timer.c \
              program/drivers/spi.c \
+             program/drivers/uart.c \
+             program/drivers/timer.c \
              program/drivers/sdcard.c \
-             program/app/raystones.c \
-             program/app/test_rtos.c \
-             program/drivers/ddr.c \
-             program/FreeRTOS/list.c \
-             program/FreeRTOS/queue.c \
-             program/FreeRTOS/tasks.c \
-             program/FreeRTOS/portable/MemMang/heap_4.c \
-             program/FreeRTOS/portable/GCC/RISC-V/port.c \
-             program/FreeRTOS/timers.c \
-             program/app/freertos_hooks.c
+             program/app/raystones.c
 
 _C_SOURCES += $(sort $(_TEST_SOURCES))
 
-_S_UPPER_SOURCES = program/FreeRTOS/portable/GCC/RISC-V/portASM.S
+_S_UPPER_SOURCES =
 LINKER_SCRIPT = program/boot/linker_pipeline.ld      
+DDR_LINKER_SCRIPT = program/boot/linker_ddr.ld
 
 BIN2HEX_C_SRC = program/tools/bin_to_verilog_hex.c
 
@@ -88,6 +82,11 @@ TARGET_TEXT_BIN = $(BUILD_DIR)/program_text.bin
 TARGET_DATA_BIN = $(BUILD_DIR)/program_data.bin
 TARGET_PROGROM_HEX = $(BUILD_DIR)/PROGROM.hex
 TARGET_DATARAM_HEX = $(BUILD_DIR)/DATARAM.hex
+DDR_APP_ELF = $(BUILD_DIR)/ddr_app.elf
+DDR_APP_TEXT_BIN = $(BUILD_DIR)/ddr_app_text.bin
+DDR_APP_DATA_BIN = $(BUILD_DIR)/ddr_app_data.bin
+DDR_APP_BIN = $(BUILD_DIR)/BOOT.BIN
+SD_IMAGE_HEX = $(BUILD_DIR)/sd_image.hex
 
 BIN2HEX_UTIL_NAME = bin_to_verilog_hex
 ifeq ($(OS),Windows_NT)
@@ -98,21 +97,23 @@ endif
 
 # CPU supports RV32I + M + C (RVC is decompressed in the frontend).
 ARCH_FLAGS = -march=rv32imc_zicsr -mabi=ilp32
+DDR_ARCH_FLAGS = -march=rv32imc_zicsr -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)
 FREERTOS_INCLUDE = \
-    -Iprogram/FreeRTOS \
-    -Iprogram/FreeRTOS/include \
-    -Iprogram/FreeRTOS/portable/GCC/RISC-V \
-    -Iprogram/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions
+    -Iprogram/ddr_app/FreeRTOS \
+    -Iprogram/ddr_app/FreeRTOS/include \
+    -Iprogram/ddr_app/FreeRTOS/portable/GCC/RISC-V \
+    -Iprogram/ddr_app/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions
 
 CFLAGS_S = $(CFLAGS_COMMON)
 CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions \
            -ffunction-sections -fdata-sections \
-           -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/boot \
+           -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/ddr_app -Iprogram/boot \
            -I$(BUILD_DIR)/include \
            $(FREERTOS_INCLUDE)
+DEPFLAGS = -MMD -MP
 
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
@@ -141,10 +142,11 @@ defconfig:
 	$(KCONFIG_ALLDEF) $(KCONFIG_FILE)
 	@$(MAKE) $(AUTOCONF_H)
 
-build: $(AUTOCONF_H) $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX)
+build: $(AUTOCONF_H) $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX) $(SD_IMAGE_HEX)
 	@echo "Build complete!"
 	@echo "  PROGROM: $(TARGET_PROGROM_HEX)"
 	@echo "  DATARAM: $(TARGET_DATARAM_HEX)"
+	@echo "  SD image: $(SD_IMAGE_HEX)"
 
 $(BIN2HEX_EXECUTABLE): $(BIN2HEX_C_SRC) | dirs
 	@echo "Compiling host utility: $< -> $@"
@@ -154,41 +156,62 @@ _C_OBJS = $(patsubst program/%.c,$(BUILD_DIR)/%.o,$(_C_SOURCES))
 _S_OBJS = $(patsubst program/%.s,$(BUILD_DIR)/%.o,$(_S))
 _S_UPPER_OBJS = $(patsubst program/%.S,$(BUILD_DIR)/%.o,$(_S_UPPER_SOURCES))
 OBJS = $(_C_OBJS) $(_S_OBJS) $(_S_UPPER_OBJS)
+DDR_APP_OBJS = $(BUILD_DIR)/ddr_app/start.o \
+               $(BUILD_DIR)/ddr_app/main.o \
+               $(BUILD_DIR)/ddr_app/test_rtos.o \
+               $(BUILD_DIR)/ddr_app/freertos_hooks.o \
+               $(BUILD_DIR)/drivers/uart.o \
+               $(BUILD_DIR)/utils/print.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/list.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/queue.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/tasks.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/timers.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/portable/GCC/RISC-V/port.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/portable/GCC/RISC-V/portASM.o \
+               $(BUILD_DIR)/ddr_app/FreeRTOS/portable/MemMang/heap_4.o
+DEP_FILES = $(sort $(OBJS:.o=.d) $(DDR_APP_OBJS:.o=.d))
+
+-include $(DEP_FILES)
 
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "Linking object files to $@"
 	$(CC) $(ARCH_FLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
 	@echo ""
-	@echo "=== Program Size and Memory Usage ==="
-	@$(SIZE) -A $@
-	@echo ""
-	@$(SIZE) -B $@
-	@echo ""
-	@echo "=== Memory Utilization (32KB each) ==="
-	@$(SIZE) -A $@ | awk ' \
-		BEGIN { text=0; data=0; rodata=0; bss=0 } \
-		/^\.text/ { text=$$2 } \
-		/^\.data/ { data=$$2 } \
-		/^\.rodata/ { rodata=$$2 } \
-		/^\.bss/ { bss=$$2 } \
-		END { \
-			progrom_used = text; \
-			dataram_used = data + rodata; \
-			progrom_percent = (progrom_used/32768)*100; \
-			dataram_percent = (dataram_used/32768)*100; \
-			ram_used = data + rodata + bss; \
-			ram_percent = (ram_used/32768)*100; \
-			printf "PROGROM (.text):         %6d / 32768 bytes (%5.2f%%)\n", progrom_used, progrom_percent; \
-			printf "DATARAM (.data+.rodata): %6d / 32768 bytes (%5.2f%%)\n", dataram_used, dataram_percent; \
-			printf "RAM usage (data+bss):    %6d / 32768 bytes (%5.2f%%)\n", ram_used, ram_percent; \
-		}'
-	@echo "========================================"
-	@echo ""
+
+$(DDR_APP_ELF): $(DDR_APP_OBJS) $(DDR_LINKER_SCRIPT) | dirs
+	@echo "Linking DDR app to $@"
+	$(CC) $(DDR_ARCH_FLAGS) -nostartfiles -T$(DDR_LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -Wl,--no-relax -flto $(DDR_APP_OBJS) $(LIBS) -o $@
+
+$(DDR_APP_TEXT_BIN): $(DDR_APP_ELF) | dirs
+	@echo "Extracting DDR app .text to $@"
+	$(OBJCOPY) -O binary --only-section=.text $< $@
+
+$(DDR_APP_DATA_BIN): $(DDR_APP_ELF) | dirs
+	@echo "Extracting DDR app .ramdata to $@"
+	$(OBJCOPY) -O binary --only-section=.ramdata $< $@
+
+$(DDR_APP_BIN): $(DDR_APP_TEXT_BIN) $(DDR_APP_DATA_BIN) program/tools/make_ddr_app_image.py | dirs
+	@echo "Packaging DDR app image $@"
+	python3 program/tools/make_ddr_app_image.py $(DDR_APP_TEXT_BIN) $(DDR_APP_DATA_BIN) $@
+
+$(SD_IMAGE_HEX): $(DDR_APP_BIN) program/tools/make_sd_image.py | dirs
+	@echo "Generating FAT32 SD image $@"
+	python3 program/tools/make_sd_image.py $(DDR_APP_BIN) $@
+
+$(BUILD_DIR)/ddr_app/start.o: program/ddr_app/start.s | dirs
+	@mkdir -p $(dir $@)
+	@echo "Assembling DDR app start: $< -> $@"
+	$(CC) $(DDR_ARCH_FLAGS) -ffreestanding -c $< -o $@
+
+$(BUILD_DIR)/ddr_app/main.o: program/ddr_app/main.c $(AUTOCONF_H) | dirs
+	@mkdir -p $(dir $@)
+	@echo "Compiling DDR app C source: $< -> $@"
+	$(CC) $(CFLAGS_C) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: program/%.c $(AUTOCONF_H) | dirs
 	@mkdir -p $(dir $@)
 	@echo "Compiling C source: $< -> $@"
-	$(CC) $(CFLAGS_C) -c $< -o $@
+	$(CC) $(CFLAGS_C) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: program/%.s | dirs
 	@mkdir -p $(dir $@)
@@ -199,7 +222,7 @@ $(BUILD_DIR)/%.o: program/%.s | dirs
 $(BUILD_DIR)/%.o: program/%.S | dirs
 	@mkdir -p $(dir $@)
 	@echo "Assembling (preprocessed): $< -> $@"
-	$(CC) $(CFLAGS_S) $(FREERTOS_INCLUDE) -c $< -o $@
+	$(CC) $(CFLAGS_S) $(FREERTOS_INCLUDE) $(DEPFLAGS) -c $< -o $@
 
 $(TARGET_BIN): $(TARGET_ELF) dirs
 	@echo "Converting $< to $@"
@@ -238,12 +261,12 @@ $(TARGET_DATARAM_HEX): $(TARGET_DATA_BIN) $(BIN2HEX_EXECUTABLE) | dirs
 
 load:
 	@echo "Loading bitstream to FPGA SRAM..."
-	openFPGALoader -c ft2232 -b tangprimer20k ../impl/pnr/melon-riscv.fs
+	openFPGALoader -b tangprimer20k ../impl/pnr/melon-riscv.fs
 	@echo "Load complete."
 
 load_flash:
 	@echo "Flashing bitstream to FPGA flash..."
-	openFPGALoader -c ft2232 -b tangprimer20k -f ../impl/pnr/melon-riscv.fs
+	openFPGALoader -c ft2232 -b tangprimer20k -f ../impl/pnr/melon-riscv.fs --unprotect-flash
 	@echo "Flash complete."
 
 simulate: build $(VERILOG_SOURCES) $(SIM_CPP)
@@ -263,4 +286,3 @@ clean:
 	@echo "Cleaning up generated files and directories..."
 	rm -rf $(BUILD_DIR) $(TARGET_NAME).elf $(TARGET_NAME).bin $(TARGET_NAME).hex .elf .bin .hex obj_dir
 	@echo "Cleanup complete."
-

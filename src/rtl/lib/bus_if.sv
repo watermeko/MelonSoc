@@ -8,25 +8,29 @@
             logic [ADDR_W-1:0] addr;
             logic              ren;
             logic [DATA_W-1:0] rdata;
+            logic              stall;
 
-            modport master (output addr, ren, input rdata);
-            modport slave  (input addr, ren, output rdata);
+            modport master (output addr, ren, input rdata, stall);
+            modport slave  (input addr, ren, output rdata, stall);
         endinterface
 
-        interface simple_bus_if #(
+        interface wb_if #(
                 parameter int unsigned ADDR_W = 32,
                 parameter int unsigned DATA_W = 32,
-                parameter int unsigned STRB_W = (DATA_W / 8)
+                parameter int unsigned SEL_W = (DATA_W / 8)
             );
-            logic [ADDR_W-1:0] addr;
-            logic              ren;
-            logic              wen;
-            logic [DATA_W-1:0] wdata;
-            logic [STRB_W-1:0] wstrb;
-            logic [DATA_W-1:0] rdata;
+            logic [ADDR_W-1:0] adr;
+            logic [DATA_W-1:0] dat_w;
+            logic [DATA_W-1:0] dat_r;
+            logic [SEL_W-1:0]  sel;
+            logic              we;
+            logic              cyc;
+            logic              stb;
+            logic              ack;
+            logic              stall;
 
-            modport master (output addr, ren, wen, wdata, wstrb, input rdata);
-            modport slave  (input addr, ren, wen, wdata, wstrb, output rdata);
+            modport master (output adr, dat_w, sel, we, cyc, stb, input dat_r, ack, stall);
+            modport slave  (input adr, dat_w, sel, we, cyc, stb, output dat_r, ack, stall);
         endinterface
 
 `endif

@@ -1,6 +1,6 @@
 #include "spi.h"
 
-static uint32_t g_spi_ctrl = SPI_CTRL_CS_N;
+static uint32_t g_spi_ctrl;
 
 void spi_init(uint32_t sys_clk_hz, uint32_t spi_hz) {
     if (spi_hz == 0)
@@ -10,6 +10,7 @@ void spi_init(uint32_t sys_clk_hz, uint32_t spi_hz) {
     if (div == 0)
         div = 1;
 
+    g_spi_ctrl = SPI_CTRL_CS_N;
     *spi_div_reg() = div & 0xFFFFu;
     spi_set_cs(1);
 }

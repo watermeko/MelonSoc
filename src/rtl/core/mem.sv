@@ -6,7 +6,7 @@ module mem #(
     ) (
         input logic clk,
         imem_if.slave instr,
-        simple_bus_if.slave data
+        wb_if.slave data
     );
     import soc_pkg::*;
     localparam int unsigned PROGROM_AW = $clog2(PROGROM_WORDS);
@@ -19,7 +19,9 @@ module mem #(
     logic [PROGROM_AW-1:0] instr_word_addr;
     logic [DATARAM_AW-1:0] data_word_addr;
     assign instr_word_addr = instr.addr[PROGROM_AW+1:2];
-    assign data_word_addr  = data.addr[DATARAM_AW+1:2];
+    assign data_word_addr  = data.adr[DATARAM_AW+1:2];
+    assign instr.stall = 1'b0;
+    assign data.stall = 1'b0;
 
     always_ff @(posedge clk) begin
         if (instr.ren) begin
@@ -28,21 +30,26 @@ module mem #(
     end
 
     always_ff @(posedge clk) begin
-        if (data.ren) begin
-            data.rdata <= DATARAM[data_word_addr];
+        data.ack <= data.cyc && data.stb;
+
+        if (data.cyc && data.stb && !data.we) begin
+            data.dat_r <= DATARAM[data_word_addr];
         end
 
-        if (data.wen && data.wstrb[0])
-            DATARAM[data_word_addr][7:0]   <= data.wdata[7:0];
-        if (data.wen && data.wstrb[1])
-            DATARAM[data_word_addr][15:8]  <= data.wdata[15:8];
-        if (data.wen && data.wstrb[2])
-            DATARAM[data_word_addr][23:16] <= data.wdata[23:16];
-        if (data.wen && data.wstrb[3])
-            DATARAM[data_word_addr][31:24] <= data.wdata[31:24];
+        if (data.cyc && data.stb && data.we && data.sel[0])
+            DATARAM[data_word_addr][7:0]   <= data.dat_w[7:0];
+        if (data.cyc && data.stb && data.we && data.sel[1])
+            DATARAM[data_word_addr][15:8]  <= data.dat_w[15:8];
+        if (data.cyc && data.stb && data.we && data.sel[2])
+            DATARAM[data_word_addr][23:16] <= data.dat_w[23:16];
+        if (data.cyc && data.stb && data.we && data.sel[3])
+            DATARAM[data_word_addr][31:24] <= data.dat_w[31:24];
     end
 
     initial begin
+        data.ack = 1'b0;
+        data.dat_r = 32'b0;
+
 `ifdef BENCH
         $readmemh("build/PROGROM.hex", PROGROM);
         $readmemh("build/DATARAM.hex", DATARAM);

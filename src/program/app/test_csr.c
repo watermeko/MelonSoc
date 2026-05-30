@@ -18,8 +18,7 @@ INTERRUPT_ATTR void trap_handler(void) {
         asm volatile("csrw mepc, %0" :: "r"(epc));
     } else {
         if ((cause & 0xFF) == 7) {
-            uint64_t now = clint_get_mtime();
-            clint_set_mtimecmp(now + 100000);
+            asm volatile("csrc mie, %0" :: "r"(1 << 7));
         } else if ((cause & 0xFF) == 3) {
             clint_clear_msip();
         } else if ((cause & 0xFF) == 11) {

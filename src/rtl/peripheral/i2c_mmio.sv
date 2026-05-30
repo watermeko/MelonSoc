@@ -7,12 +7,14 @@ module i2c_mmio #(
     ) (
         input  logic clk,
         input  logic rst_n,
-        simple_bus_if.slave bus,
+        wb_if.slave bus,
 
         inout  tri   sda,
         inout  tri   scl
     );
     import soc_pkg::*;
+    assign bus.ack = bus.cyc && bus.stb;
+    assign bus.stall = 1'b0;
 
     // ---------------- 寄存器映射 ----------------
     // TXRX   @ IO_I2C_TXRX_ADDR   [7:0]  写：发送字节（TX），读：接收字节（RX）
@@ -24,10 +26,10 @@ module i2c_mmio #(
 
     logic sel_txrx, sel_cmd, sel_status, sel_div;
     always_comb begin
-        sel_txrx   = (align_word(bus.addr) == IO_I2C_TXRX_ADDR);
-        sel_cmd    = (align_word(bus.addr) == IO_I2C_CMD_ADDR);
-        sel_status = (align_word(bus.addr) == IO_I2C_STATUS_ADDR);
-        sel_div    = (align_word(bus.addr) == IO_I2C_DIV_ADDR);
+        sel_txrx   = (align_word(bus.adr) == IO_I2C_TXRX_ADDR);
+        sel_cmd    = (align_word(bus.adr) == IO_I2C_CMD_ADDR);
+        sel_status = (align_word(bus.adr) == IO_I2C_STATUS_ADDR);
+        sel_div    = (align_word(bus.adr) == IO_I2C_DIV_ADDR);
     end
 
     // ---------------- MMIO 寄存器 ----------------
@@ -78,11 +80,11 @@ module i2c_mmio #(
             div_reg <= DEFAULT_DIV[15:0];
         end
         else begin
-            if (bus.wen && sel_txrx && (|bus.wstrb)) begin
-                tx_reg <= bus.wdata[7:0];
+            if (bus.cyc && bus.stb && bus.we && sel_txrx && (|bus.sel)) begin
+                tx_reg <= bus.dat_w[7:0];
             end
-            if (bus.wen && sel_div && (|bus.wstrb)) begin
-                div_reg <= bus.wdata[15:0];
+            if (bus.cyc && bus.stb && bus.we && sel_div && (|bus.sel)) begin
+                div_reg <= bus.dat_w[15:0];
             end
         end
     end
@@ -123,21 +125,21 @@ module i2c_mmio #(
                 div_cnt <= div_cnt - 16'd1;
 
             // 空闲状态下接收并启动新命令。
-            if (bus.wen && sel_cmd && (|bus.wstrb) && !busy) begin
-                cmd_ack   <= bus.wdata[4];
+            if (bus.cyc && bus.stb && bus.we && sel_cmd && (|bus.sel) && !busy) begin
+                cmd_ack   <= bus.dat_w[4];
 
-                need_start <= bus.wdata[0];
-                need_stop  <= bus.wdata[1];
-                op_write   <= bus.wdata[2] & ~bus.wdata[3];
-                op_read    <= bus.wdata[3];
+                need_start <= bus.dat_w[0];
+                need_stop  <= bus.dat_w[1];
+                op_write   <= bus.dat_w[2] & ~bus.dat_w[3];
+                op_read    <= bus.dat_w[3];
 
                 done <= 1'b0; // 新命令到来时清除粘滞标志
                 nack <= 1'b0;
 
                 busy <= 1'b1;
-                state <= bus.wdata[0] ? ST_START :
-                      (bus.wdata[2] | bus.wdata[3]) ? ST_BIT0 :
-                      bus.wdata[1] ? ST_STOP0 : ST_DONE;
+                state <= bus.dat_w[0] ? ST_START :
+                      (bus.dat_w[2] | bus.dat_w[3]) ? ST_BIT0 :
+                      bus.dat_w[1] ? ST_STOP0 : ST_DONE;
 
                 shift_reg <= tx_reg;
                 bit_idx <= 3'd7;
@@ -207,10 +209,10 @@ module i2c_mmio #(
     // ---------------- MMIO 读回 ----------------
     always_comb begin
         case (1'b1)
-            sel_txrx:   bus.rdata = {24'b0, rx_reg};
-            sel_status: bus.rdata = {29'b0, nack, done, busy};
-            sel_div:    bus.rdata = {16'b0, div_reg};
-            default:    bus.rdata = 32'b0;
+            sel_txrx:   bus.dat_r = {24'b0, rx_reg};
+            sel_status: bus.dat_r = {29'b0, nack, done, busy};
+            sel_div:    bus.dat_r = {16'b0, div_reg};
+            default:    bus.dat_r = 32'b0;
         endcase
     end
 endmodule

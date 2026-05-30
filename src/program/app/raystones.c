@@ -127,10 +127,14 @@ static float raystones_powf(float base, float exponent) {
 //   ratio).
 // - smaller image size (for faster run in simulation)
 
-static int graphics_width  = 120;
-static int graphics_height = 60;
+#define GRAPHICS_WIDTH_DEFAULT 120
+#define GRAPHICS_HEIGHT_DEFAULT 60
+#define GRAPHICS_WIDTH_BENCH 40
+#define GRAPHICS_HEIGHT_BENCH 20
 
-static int bench_run=0;
+static int graphics_width;
+static int graphics_height;
+static int bench_run;
 
 // Two pixels per character using UTF8 character set
 // (comment-out if terminal does not support it)
@@ -545,11 +549,13 @@ void render(Sphere* spheres, int nb_spheres, Light* lights, int nb_lights) {
    stats_end_frame();
 }
 
-int nb_spheres = 4;
-Sphere spheres[4];
+enum {
+  nb_spheres = 4,
+  nb_lights = 3
+};
 
-int nb_lights = 3;
-Light lights[3];
+Sphere spheres[nb_spheres];
+Light lights[nb_lights];
 
 void init_scene(void) {
     Material ivory = make_Material(
@@ -581,15 +587,15 @@ void raystones_run(void) {
     graphics_init();
     gpio_set_leds(5);
     bench_run = 1;
-    graphics_width  = 40;
-    graphics_height = 20;
+    graphics_width  = GRAPHICS_WIDTH_BENCH;
+    graphics_height = GRAPHICS_HEIGHT_BENCH;
     printf("Running without graphic output (for accurate measurement)...\n");
     render(spheres, nb_spheres, lights, nb_lights);
     gpio_set_leds(10);
 
     bench_run = 0;
-    graphics_width = 120;
-    graphics_height = 60;
+    graphics_width = GRAPHICS_WIDTH_DEFAULT;
+    graphics_height = GRAPHICS_HEIGHT_DEFAULT;
     graphics_init();
     render(spheres, nb_spheres, lights, nb_lights);
     gpio_set_leds(15);

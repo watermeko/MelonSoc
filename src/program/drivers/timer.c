@@ -6,12 +6,22 @@ static inline void timer_write_ctrl(uint32_t value) {
     *timer_ctrl_reg() = value;
 }
 
+static inline uint32_t timer_read_reg(volatile uint32_t *reg) {
+    /*
+     * MMIO reads come back through a registered SoC read-data path.
+     * When switching addresses, the first read can observe the previous
+     * register value, so read twice and use the second sample.
+     */
+    (void)*reg;
+    return *reg;
+}
+
 uint32_t timer_ticks_per_sec(void) {
     return g_timer_ticks_per_sec;
 }
 
 uint32_t timer_get_count(void) {
-    return *timer_count_reg();
+    return timer_read_reg(timer_count_reg());
 }
 
 void timer_init_1mhz(uint32_t clk_hz) {

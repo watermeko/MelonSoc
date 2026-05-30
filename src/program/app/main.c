@@ -9,7 +9,7 @@
 #include "clint.h"
 #include "ddr.h"
 #include "print.h"
-#include "test_rtos.h"
+#include "fatboot.h"
 
 #if defined(CONFIG_APP_TEST_CSR) || defined(CONFIG_APP_TEST_IRQ) || defined(CONFIG_APP_TEST_MTIME)
 #include "test_csr.h"
@@ -20,6 +20,8 @@
 #endif
 
 void raystones_run(void);
+
+typedef void (*entry_fn)(void);
 
 #ifdef CONFIG_APP_TEST_M
 static inline uint64_t rdcycle(void) {
@@ -166,6 +168,7 @@ static void shell_help(void) {
     puts("  sdcard_rd <skip> <count> - read sector 0 and hex dump bytes");
     puts("  ddr probe|rd|wr    - access DDR via DDR3 APP MMIO");
     puts("  raystones          - run the raystones benchmark");
+    puts("  sdload             - load BOOT.BIN from SD and jump to DDR app");
 #ifdef CONFIG_APP_TEST_M
     puts("  test-m             - test M extension (multiply/divide)");
 #endif
@@ -181,7 +184,6 @@ static void shell_help(void) {
 #ifdef CONFIG_APP_TEST_MSIP
     puts("  test-msip          - test machine software interrupt (MSIP)");
 #endif
-    puts("  test-rtos          - run FreeRTOS dual-task print test");
 }
 
 static void shell_set_leds(const char *arg) {
@@ -358,6 +360,34 @@ static void shell_ddr(const char *arg) {
         return;
     }
     puts("Unknown ddr subcommand. Use: ddr probe|rd|wr");
+}
+
+static void shell_sdload(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: sdload");
+        return;
+    }
+
+    puts("Bootloader: SD FAT32 DDR boot");
+
+    if (sdcard_init() != 0) {
+        printf("Bootloader: SD init failed err=0x%x\n", (unsigned int)sdcard_last_error());
+        return;
+    }
+    puts("Bootloader: SD ready");
+
+    uint32_t size = 0;
+    int rc = fatboot_load(0x80000000u, &size);
+    if (rc != 0) {
+        printf("Bootloader: FAT load failed rc=%d err=0x%x\n", rc, (unsigned int)sdcard_last_error());
+        return;
+    }
+
+    asm volatile("csrwi mstatus, 0\ncsrwi mie, 0" ::: "memory");
+    ((entry_fn)0x80000000u)();
+
+    for (;;) {
+    }
 }
 
 #ifdef CONFIG_APP_TEST_M
@@ -578,8 +608,8 @@ int main(void) {
             shell_sdcard_rd(arg);
         } else if (str_equals(cmd, "ddr")) {
             shell_ddr(arg);
-        } else if (str_equals(cmd, "test-rtos")) {
-            shell_test_rtos(arg);
+        } else if (str_equals(cmd, "sdload")) {
+            shell_sdload(arg);
 #ifdef CONFIG_APP_TEST_M
         } else if (str_equals(cmd, "test-m")) {
             shell_test_m(arg);
