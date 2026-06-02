@@ -30,6 +30,7 @@ module ddr3_wb_bridge #(
 
     typedef enum logic [2:0] {
         S_IDLE,
+        S_CAPTURE,
         S_READ_CMD,
         S_READ_WAIT,
         S_WRITE_CMD,
@@ -42,21 +43,35 @@ module ddr3_wb_bridge #(
     logic req_toggle_app_meta;
     logic req_toggle_app_sync;
     logic req_toggle_app_seen;
+    logic req_we_app_meta;
+    logic req_we_app_sync;
+    logic [31:0] req_addr_app_meta;
+    logic [31:0] req_addr_app_sync;
+    logic [31:0] req_dat_w_app_meta;
+    logic [31:0] req_dat_w_app_sync;
+    logic [3:0] req_sel_app_meta;
+    logic [3:0] req_sel_app_sync;
     logic rsp_toggle;
     logic rsp_toggle_bus_meta;
     logic rsp_toggle_bus_sync;
     logic rsp_toggle_bus_seen;
     logic rsp_ack_pending;
+    logic [31:0] rsp_dat_r_bus_meta;
+    logic [31:0] rsp_dat_r_bus_sync;
 
     logic req_we;
     logic [31:0] req_addr;
     logic [31:0] req_dat_w;
     logic [3:0] req_sel;
+    logic app_req_we;
+    logic [31:0] app_req_addr;
+    logic [31:0] app_req_dat_w;
+    logic [3:0] app_req_sel;
     logic [31:0] rsp_dat_r;
     logic [127:0] line;
 
-    wire [1:0] word_sel = req_addr[3:2];
-    wire [APP_ADDR_W-1:0] line_app_addr = {req_addr[APP_ADDR_W:4], 3'b000};
+    wire [1:0] app_word_sel = app_req_addr[3:2];
+    wire [APP_ADDR_W-1:0] app_line_addr = {app_req_addr[APP_ADDR_W:4], 3'b000};
 
     function automatic logic [127:0] merge_word(
         input logic [127:0] old_line,
@@ -90,6 +105,8 @@ module ddr3_wb_bridge #(
             rsp_toggle_bus_sync <= 1'b0;
             rsp_toggle_bus_seen <= 1'b0;
             rsp_ack_pending <= 1'b0;
+            rsp_dat_r_bus_meta <= 32'b0;
+            rsp_dat_r_bus_sync <= 32'b0;
             req_we <= 1'b0;
             req_addr <= 32'b0;
             req_dat_w <= 32'b0;
@@ -101,6 +118,8 @@ module ddr3_wb_bridge #(
             bus.ack <= 1'b0;
             rsp_toggle_bus_meta <= rsp_toggle;
             rsp_toggle_bus_sync <= rsp_toggle_bus_meta;
+            rsp_dat_r_bus_meta <= rsp_dat_r;
+            rsp_dat_r_bus_sync <= rsp_dat_r_bus_meta;
 
             if (rsp_ack_pending) begin
                 bus.ack <= 1'b1;
@@ -129,7 +148,19 @@ module ddr3_wb_bridge #(
             req_toggle_app_meta <= 1'b0;
             req_toggle_app_sync <= 1'b0;
             req_toggle_app_seen <= 1'b0;
+            req_we_app_meta <= 1'b0;
+            req_we_app_sync <= 1'b0;
+            req_addr_app_meta <= 32'b0;
+            req_addr_app_sync <= 32'b0;
+            req_dat_w_app_meta <= 32'b0;
+            req_dat_w_app_sync <= 32'b0;
+            req_sel_app_meta <= 4'b0;
+            req_sel_app_sync <= 4'b0;
             rsp_toggle <= 1'b0;
+            app_req_we <= 1'b0;
+            app_req_addr <= 32'b0;
+            app_req_dat_w <= 32'b0;
+            app_req_sel <= 4'b0;
             rsp_dat_r <= 32'b0;
             line <= 128'b0;
             app_addr <= '0;
@@ -143,6 +174,14 @@ module ddr3_wb_bridge #(
         else begin
             req_toggle_app_meta <= req_toggle;
             req_toggle_app_sync <= req_toggle_app_meta;
+            req_we_app_meta <= req_we;
+            req_we_app_sync <= req_we_app_meta;
+            req_addr_app_meta <= req_addr;
+            req_addr_app_sync <= req_addr_app_meta;
+            req_dat_w_app_meta <= req_dat_w;
+            req_dat_w_app_sync <= req_dat_w_app_meta;
+            req_sel_app_meta <= req_sel;
+            req_sel_app_sync <= req_sel_app_meta;
             app_cmd_en <= 1'b0;
             app_wren <= 1'b0;
             app_data_end <= 1'b0;
@@ -152,13 +191,18 @@ module ddr3_wb_bridge #(
                 S_IDLE: begin
                     if ((req_toggle_app_sync != req_toggle_app_seen) && init_calib_complete) begin
                         req_toggle_app_seen <= req_toggle_app_sync;
-                        app_addr <= line_app_addr;
-                        app_cmd <= 3'd1;
-                        app_state <= S_READ_CMD;
+                        app_state <= S_CAPTURE;
                     end
                 end
+                S_CAPTURE: begin
+                    app_req_we <= req_we_app_sync;
+                    app_req_addr <= req_addr_app_sync;
+                    app_req_dat_w <= req_dat_w_app_sync;
+                    app_req_sel <= req_sel_app_sync;
+                    app_state <= S_READ_CMD;
+                end
                 S_READ_CMD: begin
-                    app_addr <= line_app_addr;
+                    app_addr <= app_line_addr;
                     app_cmd <= 3'd1;
                     if (app_cmd_rdy) begin
                         app_cmd_en <= 1'b1;
@@ -168,12 +212,12 @@ module ddr3_wb_bridge #(
                 S_READ_WAIT: begin
                     if (app_rdata_valid) begin
                         line <= app_rdata;
-                        if (req_we) begin
-                            app_data <= merge_word(app_rdata, word_sel, req_dat_w, req_sel);
+                        if (app_req_we) begin
+                            app_data <= merge_word(app_rdata, app_word_sel, app_req_dat_w, app_req_sel);
                             app_state <= S_WRITE_CMD;
                         end
                         else begin
-                            unique case (word_sel)
+                            unique case (app_word_sel)
                                 2'd0: rsp_dat_r <= app_rdata[31:0];
                                 2'd1: rsp_dat_r <= app_rdata[63:32];
                                 2'd2: rsp_dat_r <= app_rdata[95:64];
@@ -184,9 +228,9 @@ module ddr3_wb_bridge #(
                     end
                 end
                 S_WRITE_CMD: begin
-                    app_addr <= line_app_addr;
+                    app_addr <= app_line_addr;
                     app_cmd <= 3'd0;
-                    app_data <= merge_word(line, word_sel, req_dat_w, req_sel);
+                    app_data <= merge_word(line, app_word_sel, app_req_dat_w, app_req_sel);
                     if (app_cmd_rdy && app_data_rdy) begin
                         app_cmd_en <= 1'b1;
                         app_wren <= 1'b1;
