@@ -24,7 +24,8 @@ module ddr3_wb_bridge #(
         input  logic [127:0]         app_rdata,
 
         input  logic                 init_calib_complete,
-        output logic [5:0]           app_burst_number
+        output logic [5:0]           app_burst_number,
+        output logic                 app_idle
     );
     import soc_pkg::*;
 
@@ -63,6 +64,11 @@ module ddr3_wb_bridge #(
     logic [31:0] req_addr;
     logic [31:0] req_dat_w;
     logic [3:0] req_sel;
+
+    // app_idle: high when the APP FSM is idle and has no in-flight request,
+    // so an external APP arbiter can safely grant the APP port to another master.
+    assign app_idle = (app_state == S_IDLE) &&
+                      (req_toggle_app_sync == req_toggle_app_seen);
     logic app_req_we;
     logic [31:0] app_req_addr;
     logic [31:0] app_req_dat_w;

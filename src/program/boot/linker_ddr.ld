@@ -1,4 +1,6 @@
 MEMORY {
+   /* Note: 0x80100000..0x80140000 (256 KiB) is reserved for the LCD
+      framebuffer written by lcd.c / streamed by the LCD DMA. */
    DDR (RWX) : ORIGIN = 0x80000000, LENGTH = 0x08000000
 }
 

@@ -1,5 +1,7 @@
 `include "lib/soc_pkg.sv"
 `include "lib/bus_if.sv"
+`include "ip/video_pll/video_pll.v"
+`include "peripheral/lcd_dma.sv"
 module top(
         input  clk,
         input  rst_n,
@@ -28,7 +30,16 @@ module top(
         output [2-1:0]              ddr_dm,         //DM_WIDTH=2
         inout [16-1:0]              ddr_dq,         //DQ_WIDTH=16
         inout [2-1:0]               ddr_dqs,        //DQS_WIDTH=2
-        inout [2-1:0]               ddr_dqs_n      //DQS_WIDTH=2
+        inout [2-1:0]               ddr_dqs_n,      //DQS_WIDTH=2
+
+        // RGB565 480x272 LCD panel
+        output              lcd_dclk,
+        output              lcd_hs,
+        output              lcd_vs,
+        output              lcd_de,
+        output [4:0]        lcd_r,
+        output [5:0]        lcd_g,
+        output [4:0]        lcd_b
     );
 
     wire i2c_scl_drive_low;
@@ -37,6 +48,18 @@ module top(
     // DDR3 APP 口（对接 DDR3_Memory_Interface_Top）
     wire clk_x1;
 
+    // CPU-side APP signals (from ddr3_wb_bridge inside SOC)
+    wire [27:0]  cpu_app_addr;
+    wire         cpu_app_cmd_en;
+    wire [2:0]   cpu_app_cmd;
+    wire         cpu_app_cmd_rdy;
+    wire         cpu_app_rdata_valid;
+    wire         cpu_app_rdata_end;
+    wire [127:0] cpu_app_rdata;
+    wire [5:0]   cpu_app_burst_number;
+    wire         cpu_app_idle;
+
+    // Common (DDR3 IP inputs) APP signals driven by the arbiter
     wire [27:0]  ddr_app_addr;
     wire         ddr_app_cmd_en;
     wire [2:0]   ddr_app_cmd;
@@ -45,12 +68,41 @@ module top(
     wire [127:0] ddr_app_data;
     wire [5:0]   ddr_app_burst_number;
 
-    wire         ddr_app_cmd_rdy;
+    wire         ddr_app_cmd_rdy_arb;   // IP cmd_ready, fanned back by arbiter
     wire         ddr_app_data_rdy;
     wire         ddr_app_rdata_valid;
     wire         ddr_app_rdata_end;
     wire [127:0] ddr_app_rdata;
     wire         ddr_init_calib_complete;
+
+    // CPU-side APP outputs (from ddr3_wb_bridge inside SOC)
+    wire         cpu_app_wren_out;
+    wire         cpu_app_data_end_out;
+    wire [127:0] cpu_app_data_out;
+
+    // LCD-side APP signals
+    wire [27:0]  lcd_app_addr;
+    wire         lcd_app_cmd_en;
+    wire [2:0]   lcd_app_cmd;
+    wire         lcd_app_cmd_rdy;
+    wire         lcd_app_rdata_valid;
+    wire [127:0] lcd_app_rdata;
+    wire [5:0]   lcd_app_burst_number;  // unused but driven by DMA
+
+    // Pixel clock for the LCD (~9 MHz from the 27 MHz board clock).
+    wire memory_clk;
+    wire pll_lock;
+    wire lcd_dclk_int;
+    wire lcd_pll_lock;
+    logic [18:0] lcd_start_ctr = '0;
+    logic        lcd_rst_n = 1'b0;
+
+    video_pll u_video_pll (
+        .clkin (clk),
+        .lock  (lcd_pll_lock),
+        .clkout(lcd_dclk_int)
+    );
+    assign lcd_dclk = lcd_dclk_int;
     wire spi_cs_n_unused;
     wire spi_sck_unused;
     wire spi_mosi_unused;
@@ -64,6 +116,20 @@ module top(
     assign sddat_native[2] = 1'b1;
     assign sd_cs_n = 1'bz;
     assign sddat_native[3] = sd_cs_n;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            lcd_start_ctr <= '0;
+            lcd_rst_n <= 1'b0;
+        end
+        else if (lcd_start_ctr != {19{1'b1}}) begin
+            lcd_start_ctr <= lcd_start_ctr + 19'd1;
+            lcd_rst_n <= 1'b0;
+        end
+        else begin
+            lcd_rst_n <= 1'b1;
+        end
+    end
 
     SOC u_soc(
             .clk        (clk       ),
@@ -82,26 +148,24 @@ module top(
             .sdcmd(sd_mosi),
             .sddat(sddat_native),
 
-            .ddr_app_addr(ddr_app_addr),
-            .ddr_app_cmd_en(ddr_app_cmd_en),
-            .ddr_app_cmd(ddr_app_cmd),
-            .ddr_app_cmd_rdy(ddr_app_cmd_rdy),
+            .ddr_app_addr(cpu_app_addr),
+            .ddr_app_cmd_en(cpu_app_cmd_en),
+            .ddr_app_cmd(cpu_app_cmd),
+            .ddr_app_cmd_rdy(cpu_app_cmd_rdy),
 
-            .ddr_app_wren(ddr_app_wren),
-            .ddr_app_data_end(ddr_app_data_end),
-            .ddr_app_data(ddr_app_data),
+            .ddr_app_wren(cpu_app_wren_out),
+            .ddr_app_data_end(cpu_app_data_end_out),
+            .ddr_app_data(cpu_app_data_out),
             .ddr_app_data_rdy(ddr_app_data_rdy),
 
-            .ddr_app_rdata_valid(ddr_app_rdata_valid),
-            .ddr_app_rdata_end(ddr_app_rdata_end),
-            .ddr_app_rdata(ddr_app_rdata),
+            .ddr_app_rdata_valid(cpu_app_rdata_valid),
+            .ddr_app_rdata_end(cpu_app_rdata_end),
+            .ddr_app_rdata(cpu_app_rdata),
 
             .ddr_init_calib_complete(ddr_init_calib_complete),
-            .ddr_app_burst_number(ddr_app_burst_number)
+            .ddr_app_burst_number(cpu_app_burst_number),
+            .ddr_app_idle(cpu_app_idle)
         );
-
-    wire memory_clk;
-    wire pll_lock;
 
     Gowin_rPLL pll(
                    .clkout(memory_clk), //output clkout
@@ -120,7 +184,7 @@ module top(
                                   .pll_lock        (pll_lock),
                                   .rst_n           (rst_n),   //rst_n
                                   .app_burst_number(ddr_app_burst_number),
-                                  .cmd_ready       (ddr_app_cmd_rdy),
+                                  .cmd_ready       (ddr_app_cmd_rdy_arb),
                                   .cmd             (ddr_app_cmd),
                                   .cmd_en          (ddr_app_cmd_en),
                                   .addr            (ddr_app_addr),
@@ -158,4 +222,88 @@ module top(
                                   .IO_ddr_dqs      (ddr_dqs),
                                   .IO_ddr_dqs_n    (ddr_dqs_n)
                               );
+
+    // ---- LCD framebuffer DMA -> DDR APP (read-only, scavenger) -----------
+    lcd_dma u_lcd_dma (
+        .app_clk              (clk_x1),
+        .rst_n                (lcd_rst_n),
+        .init_calib_complete  (ddr_init_calib_complete),
+        .app_addr             (lcd_app_addr),
+        .app_cmd_en           (lcd_app_cmd_en),
+        .app_cmd              (lcd_app_cmd),
+        .app_cmd_rdy          (lcd_app_cmd_rdy),
+        .app_rdata_valid      (lcd_app_rdata_valid),
+        .app_rdata            (lcd_app_rdata),
+        .app_burst_number     (lcd_app_burst_number),
+        .pix_clk              (lcd_dclk_int),
+        .pix_rst              (~lcd_rst_n | ~lcd_pll_lock),
+        .lcd_hs               (lcd_hs),
+        .lcd_vs               (lcd_vs),
+        .lcd_de               (lcd_de),
+        .lcd_r                (lcd_r),
+        .lcd_g                (lcd_g),
+        .lcd_b                (lcd_b)
+    );
+
+    // ---- DDR APP arbiter: CPU priority, LCD scavenger ---------------------
+    // The CPU's ddr3_wb_bridge declares app_idle when its APP FSM is idle with
+    // no in-flight request. When the LCD DMA is granted, it keeps the APP port
+    // for a burst window (>= several beats) so it can sustain the ~9 MHz pixel
+    // stream; the CPU is simply stalled (cmd_rdy=0) during that window, which
+    // is safe because the CPU bridge holds its request until serviced.
+    //
+    // Read-data ownership is tracked by an in-flight command counter: a beat
+    // read issued while LCD was granted returns to the LCD; otherwise to CPU.
+    logic lcd_grant;
+    logic [1:0] inflight_lcd;   // outstanding LCD read beats (0..2)
+    wire lcd_issue  = lcd_grant && lcd_app_cmd_en && lcd_app_cmd_rdy;
+    wire lcd_retire = ddr_app_rdata_valid && (inflight_lcd != 0);
+
+    always_ff @(posedge clk_x1 or negedge lcd_rst_n) begin
+        if (!lcd_rst_n) begin
+            lcd_grant     <= 1'b0;
+            inflight_lcd  <= 2'd0;
+        end
+        else begin
+            // grant/handoff
+            if (!lcd_grant)
+                lcd_grant <= cpu_app_idle && (inflight_lcd == 0) && lcd_app_cmd_en;
+            // release when no LCD beat is in flight and LCD no longer requests
+            else if (inflight_lcd == 0 && !lcd_app_cmd_en)
+                lcd_grant <= 1'b0;
+
+            // count outstanding LCD beats: issue when (lcd_grant & cmd_en & rdy)
+            //      retire when a beat returns tagged LCD
+            if (lcd_issue && !lcd_retire)
+                inflight_lcd <= inflight_lcd + 2'd1;
+            else if (!lcd_issue && lcd_retire)
+                inflight_lcd <= inflight_lcd - 2'd1;
+        end
+    end
+
+    // command/address toward DDR3: CPU when not granting LCD, else LCD
+    assign ddr_app_cmd_en = lcd_grant ? lcd_app_cmd_en   : cpu_app_cmd_en;
+    assign ddr_app_cmd    = lcd_grant ? lcd_app_cmd      : cpu_app_cmd;
+    assign ddr_app_addr   = lcd_grant ? lcd_app_addr     : cpu_app_addr;
+
+    // burst number toward the IP: whichever master is granted.
+    assign ddr_app_burst_number = lcd_grant ? lcd_app_burst_number : cpu_app_burst_number;
+
+    // cmd_ready fed back to each master: only the granted one sees ready.
+    assign cpu_app_cmd_rdy       = lcd_grant ? 1'b0 : ddr_app_cmd_rdy_arb;
+    assign lcd_app_cmd_rdy       = lcd_grant ? ddr_app_cmd_rdy_arb : 1'b0;
+
+    // write side belongs to the CPU bridge only (DMA never writes).
+    assign ddr_app_wren        = cpu_app_wren_out;
+    assign ddr_app_data_end    = cpu_app_data_end_out;
+    assign ddr_app_data        = cpu_app_data_out;
+
+    // read-data routing by the in-flight LCD count: a returning beat is tagged
+    // LCD iff it was issued under LCD grant and not yet retired.
+    wire beat_is_lcd = (inflight_lcd != 0) && ddr_app_rdata_valid;
+    assign cpu_app_rdata_valid  = ddr_app_rdata_valid & ~beat_is_lcd;
+    assign lcd_app_rdata_valid  = ddr_app_rdata_valid &  beat_is_lcd;
+    assign cpu_app_rdata        = ddr_app_rdata;
+    assign lcd_app_rdata        = ddr_app_rdata;
+    assign cpu_app_rdata_end    = ddr_app_rdata_end;
 endmodule

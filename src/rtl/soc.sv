@@ -40,7 +40,8 @@ module SOC (
         input  logic [127:0] ddr_app_rdata,
 
         input  logic         ddr_init_calib_complete,
-        output logic [5:0]   ddr_app_burst_number
+        output logic [5:0]   ddr_app_burst_number,
+        output logic         ddr_app_idle     // CPU DDR bridge APP FSM idle
     );
     import soc_pkg::*;
 
@@ -463,7 +464,8 @@ module SOC (
         .app_rdata_end(ddr_app_rdata_end),
         .app_rdata(ddr_app_rdata),
         .init_calib_complete(ddr_init_calib_complete),
-        .app_burst_number(ddr_app_burst_number)
+        .app_burst_number(ddr_app_burst_number),
+        .app_idle(ddr_app_idle)
     );
 
 `ifdef BENCH

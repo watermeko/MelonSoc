@@ -61,6 +61,7 @@ _C_SOURCES = program/utils/print.c \
              program/drivers/uart.c \
              program/drivers/timer.c \
              program/drivers/sdcard.c \
+             program/drivers/lcd.c \
              program/app/raystones.c
 
 _C_SOURCES += $(sort $(_TEST_SOURCES))

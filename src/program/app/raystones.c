@@ -1,11 +1,13 @@
 /* A port of Dmitry Sokolov's tiny raytracer to C and to FemtoRV32 */
-/* Displays on the small OLED display and/or HDMI                  */
+/* Displays on the RGB565 LCD via DDR framebuffer                   */
 /* Bruno Levy, 2020                                                */
 /* Original tinyraytracer: https://github.com/ssloy/tinyraytracer  */
 
 #include <stdint.h>
 // #include <math.h>
 #include "gpio.h"
+#include "lcd.h"
+#include "timer.h"
 
 int printf(const char *fmt, ...);
 
@@ -136,23 +138,26 @@ static int graphics_width;
 static int graphics_height;
 static int bench_run;
 
-// Two pixels per character using UTF8 character set
-// (comment-out if terminal does not support it)
-#define graphics_double_lines
+// Render directly to the LCD framebuffer (480x272 RGB565)
+// Each 120x60 logical pixel is upscaled 4x to 480x240,
+// centered vertically with 16-pixel top/bottom margins.
+
+// Simple busy-wait: give LCD DMA time to recover between bursts
+// Uses hardware timer (MMIO-based, not DDR) so DDR bus stays idle.
+static void lcd_yield(void) {
+    timer_delay_us(500);  // 500 µs is plenty for LCD DMA to read a full line
+}
 
 // Replace with your own stuff to initialize graphics
 static inline void graphics_init(void) {
-    printf("\033[48;5;16m"   // set background color black
-	   "\033[38;5;15m"   // set foreground color white	   
-	   "\033[H"          // home
-           "\033[2J");       // clear screen
+    lcd_clear(0x0000);
+    timer_delay_ms(10);  // let LCD DMA fully recover after full-screen clear
+    printf("Rendering to LCD...\n");
 }
 
 // Replace with your own stuff to terminate graphics or leave empty
-// Here I send <ctrl><D> to the UART, to exit the simulation in Verilator,
-// it is captured by special code in RTL/DEVICES/uart.v
 static inline void graphics_terminate(void) {
-    printf("\033[0m");   // restore default colors
+    // LCD framebuffer stays visible — nothing to tear down
 }
 
 // Replace with your own code.
@@ -171,36 +176,22 @@ void graphics_set_pixel(int x, int y, float r, float g, float b) {
 	  }
        }
        return;
-   } 
-#ifdef graphics_double_lines
-   static uint8_t prev_R=0;
-   static uint8_t prev_G=0;
-   static uint8_t prev_B=0;
-   if(y&1) {
-       if((R == prev_R) && (G == prev_G) && (B == prev_B)) {
-	   printf("\033[48;2;%d;%d;%dm ",(int)R,(int)G,(int)B);
-       } else {
-	   printf("\033[48;2;%d;%d;%dm",(int)prev_R,(int)prev_G,(int)prev_B);
-	   printf("\033[38;2;%d;%d;%dm",(int)R,(int)G,(int)B);
-	   // https://www.w3.org/TR/xml-entity-names/025.html
-	   // https://onlineunicodetools.com/convert-unicode-to-utf8
-	   printf("\xE2\x96\x83");
-       }
-       if(x == graphics_width-1) {
-	   printf("\033[38;2;0;0;0m");	   
-	   printf("\033[48;2;0;0;0m\n");
-       }
-   } else {
-       prev_R = R;
-       prev_G = G;
-       prev_B = B;
    }
-#else   
-   printf("\033[48;2;%d;%d;%dm ",(int)R,(int)G,(int)B);
-   if(x == graphics_width-1) {
-       printf("\033[48;2;0;0;0m\n");
+   // Write to LCD framebuffer with 4x upscaling
+   // Render: 120x60 -> LCD: 480x240 (centered vertically on 272)
+   uint16_t color = lcd_rgb565(R, G, B);
+   int lcd_x0 = x * 4;
+   int lcd_y0 = y * 4 + 16;  // vertical centering: (272-240)/2 = 16
+   volatile uint16_t *fb = lcd_fb();
+   for (int dy = 0; dy < 4; ++dy) {
+       for (int dx = 0; dx < 4; ++dx) {
+           int lx = lcd_x0 + dx;
+           int ly = lcd_y0 + dy;
+           if (lx < LCD_WIDTH && ly < LCD_HEIGHT) {
+               fb[ly * LCD_WIDTH + lx] = color;
+           }
+       }
    }
-#endif   
 }
 
 
@@ -532,20 +523,14 @@ static inline void render_pixel(
 
 void render(Sphere* spheres, int nb_spheres, Light* lights, int nb_lights) {
    stats_begin_frame();
-#ifdef graphics_double_lines  
-   for (int j = 0; j<graphics_height; j+=2) { 
-      for (int i = 0; i<graphics_width; i++) {
-	  render_pixel(i,j  ,spheres,nb_spheres,lights,nb_lights);
-	  render_pixel(i,j+1,spheres,nb_spheres,lights,nb_lights);	  
-      }
-   }
-#else
    for (int j = 0; j<graphics_height; j++) { 
       for (int i = 0; i<graphics_width; i++) {
 	  render_pixel(i,j  ,spheres,nb_spheres,lights,nb_lights);
       }
+      // Yield after each logical row — prevents LCD DMA starvation
+      if (!bench_run) lcd_yield();
    }
-#endif
+   if (!bench_run) timer_delay_ms(10);  // final recovery: 10ms
    stats_end_frame();
 }
 

@@ -8,6 +8,7 @@
 #include "timer.h"
 #include "clint.h"
 #include "ddr.h"
+#include "lcd.h"
 #include "print.h"
 #include "fatboot.h"
 
@@ -169,6 +170,7 @@ static void shell_help(void) {
     puts("  ddr probe|rd|wr    - access DDR via DDR3 APP MMIO");
     puts("  raystones          - run the raystones benchmark");
     puts("  sdload             - load BOOT.BIN from SD and jump to DDR app");
+    puts("  lcd                - draw colorbar on the DDR-backed LCD framebuffer");
 #ifdef CONFIG_APP_TEST_M
     puts("  test-m             - test M extension (multiply/divide)");
 #endif
@@ -360,6 +362,12 @@ static void shell_ddr(const char *arg) {
         return;
     }
     puts("Unknown ddr subcommand. Use: ddr probe|rd|wr");
+}
+
+static void shell_lcd(const char *arg) {
+    if (arg && *arg) { puts("Usage: lcd"); return; }
+    lcd_colorbar();
+    puts("LCD colorbar written to DDR framebuffer.");
 }
 
 static void shell_sdload(const char *arg) {
@@ -610,6 +618,8 @@ int main(void) {
             shell_ddr(arg);
         } else if (str_equals(cmd, "sdload")) {
             shell_sdload(arg);
+        } else if (str_equals(cmd, "lcd")) {
+            shell_lcd(arg);
 #ifdef CONFIG_APP_TEST_M
         } else if (str_equals(cmd, "test-m")) {
             shell_test_m(arg);
