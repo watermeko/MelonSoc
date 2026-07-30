@@ -22,6 +22,10 @@
 #include "test_msip.h"
 #endif
 
+#ifdef CONFIG_APP_TEST_SHIFT
+#include "test_shift.h"
+#endif
+
 void raystones_run(void);
 
 typedef void (*entry_fn)(void);
@@ -196,6 +200,9 @@ static void shell_help(void) {
 #endif
 #ifdef CONFIG_APP_TEST_MSIP
     puts("  test-msip          - test machine software interrupt (MSIP)");
+#endif
+#ifdef CONFIG_APP_TEST_SHIFT
+    puts("  test-shift         - test SRA/SRAI and uint16 CRC");
 #endif
 }
 
@@ -668,6 +675,10 @@ int main(void) {
 #ifdef CONFIG_APP_TEST_MSIP
         } else if (str_equals(cmd, "test-msip")) {
             shell_test_msip(arg);
+#endif
+#ifdef CONFIG_APP_TEST_SHIFT
+        } else if (str_equals(cmd, "test-shift")) {
+            shell_test_shift(arg);
 #endif
         } else {
             puts("Unknown command. Type 'help'.");

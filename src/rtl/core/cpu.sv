@@ -227,6 +227,17 @@ module cpu (
     logic [31:0] wb_value;
     logic        wb_we;
 
+    function automatic logic [31:0] arithmetic_shift_right(
+        input logic [31:0] value,
+        input logic [4:0] amount
+    );
+        logic [31:0] sign_fill;
+        begin
+            sign_fill = {32{value[31]}} & ~(32'hFFFF_FFFF >> amount);
+            return (value >> amount) | sign_fill;
+        end
+    endfunction
+
     // ---------------------- 冒险检测 ----------------------
     // 这里处理的数据相关：
     // - 大多数 ALU 相关由 EX 阶段前递解决。
@@ -495,7 +506,8 @@ module cpu (
                        3'b100:
                            ex_alu_out = (ex_rs1 ^ ex_alu_in2);
                        3'b101:
-                           ex_alu_out = id_ex_funct7[5] ? ($signed(ex_rs1) >>> shamt) : (ex_rs1 >> shamt);
+                           ex_alu_out = id_ex_funct7[5] ? arithmetic_shift_right(ex_rs1, shamt) :
+                                                        (ex_rs1 >> shamt);
                        3'b110:
                            ex_alu_out = (ex_rs1 | ex_alu_in2);
                        3'b111:

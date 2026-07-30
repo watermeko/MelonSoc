@@ -22,4 +22,8 @@ config APP_TEST_MTIME
 	bool "Enable test-mtime (machine timer interrupt)"
 	default y
 
+config APP_TEST_SHIFT
+	bool "Enable test-shift (SRA/SRAI and uint16 CRC)"
+	default y
+
 endmenu

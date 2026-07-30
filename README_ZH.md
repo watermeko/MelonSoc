@@ -37,5 +37,11 @@ make simulate SIM_XMODEM_IMAGE="build/BOOT.BIN"
 make simulate SIM_XMODEM_IMAGE="build/BOOT.BIN" SIM_XMODEM_CORRUPT_BLOCK=3
 ```
 
+CPU 算术右移与窄整数 CRC 回归：
+
+```bash
+make simulate SIM_CMD="test-shift"
+```
+
 # 运行效果
 ![图片](https://github.com/watermeko/picx-images-hosting/raw/master/all/blog/图片.b9jkxakdj.webp)

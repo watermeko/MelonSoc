@@ -29,6 +29,7 @@ _TEST_SRC_CSR   := test_csr.c
 _TEST_SRC_IRQ   := test_csr.c
 _TEST_SRC_MTIME := test_csr.c
 _TEST_SRC_MSIP  := test_msip.c
+_TEST_SRC_SHIFT := test_shift.c
 
 _TEST_SOURCES := $(foreach n,$(_TEST_ENABLED),$(if $(_TEST_SRC_$(n)),program/app/$(_TEST_SRC_$(n))))
 
