@@ -1,7 +1,6 @@
 MEMORY {
-   /* Note: 0x80100000..0x80140000 (256 KiB) is reserved for the LCD
-      framebuffer written by lcd.c / streamed by the LCD DMA. */
-   DDR (RWX) : ORIGIN = 0x80000000, LENGTH = 0x08000000
+   /* Keep the application below the LCD framebuffer. */
+   DDR_APP (RWX) : ORIGIN = 0x80000000, LENGTH = 0x00100000
 }
 
 ENTRY(_start)
@@ -14,7 +13,7 @@ SECTIONS {
         build/ddr_app/start.o (.text)
         *(.text*)
         . = ALIGN(4);
-    } > DDR
+    } > DDR_APP
 
     .ramdata : {
         . = ALIGN(4);
@@ -29,7 +28,7 @@ SECTIONS {
         *(.gcc_except_table*)
         . = ALIGN(4);
         __ramdata_end = .;
-    } > DDR
+    } > DDR_APP
 
     .bss (NOLOAD) : {
         . = ALIGN(4);
@@ -39,11 +38,12 @@ SECTIONS {
         *(COMMON)
         . = ALIGN(4);
         __bss_end = .;
-    } > DDR
+    } > DDR_APP
 }
 
 __stack_bottom = ALIGN(__bss_end, 16);
 __stack_top = __stack_bottom + STACK_SIZE;
 
 PROVIDE(__global_pointer$ = __ramdata_start + 0x800);
-ASSERT(__stack_top <= ORIGIN(DDR) + LENGTH(DDR), "DDR overflow: stack exceeds DDR")
+ASSERT(__stack_top <= ORIGIN(DDR_APP) + LENGTH(DDR_APP),
+       "DDR application overlaps LCD framebuffer")

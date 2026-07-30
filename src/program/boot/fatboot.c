@@ -1,8 +1,6 @@
 #include "fatboot.h"
+#include "boot_image.h"
 #include "sdcard.h"
-
-#define FATBOOT_MAGIC             0x5244444Du
-#define FATBOOT_HEADER_SIZE       12u
 
 static uint16_t rd16(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
@@ -88,10 +86,10 @@ int fatboot_load(uint32_t dst, uint32_t *size_out) {
     if (!file_cluster)
         return -3;
 
-    if (file_size < FATBOOT_HEADER_SIZE)
+    if (file_size < BOOT_IMAGE_HEADER_SIZE)
         return -5;
 
-    uint8_t header[FATBOOT_HEADER_SIZE];
+    uint8_t header[BOOT_IMAGE_HEADER_SIZE];
     uint8_t *text_out = (uint8_t *)dst;
     uint8_t *data_out = 0;
     uint32_t file_off = 0;
@@ -108,20 +106,23 @@ int fatboot_load(uint32_t dst, uint32_t *size_out) {
             for (uint32_t i = 0; i < n; ++i, ++file_off) {
                 uint8_t byte = sector[i];
 
-                if (file_off < FATBOOT_HEADER_SIZE) {
+                if (file_off < BOOT_IMAGE_HEADER_SIZE) {
                     header[file_off] = byte;
-                    if (file_off + 1u == FATBOOT_HEADER_SIZE) {
-                        if (rd32(&header[0]) != FATBOOT_MAGIC)
+                    if (file_off + 1u == BOOT_IMAGE_HEADER_SIZE) {
+                        uint32_t payload_size;
+                        int image_rc = boot_image_parse_header(
+                            header, dst, &text_size, &data_size, &payload_size);
+                        if (image_rc != BOOT_IMAGE_OK)
                             return -5;
-                        text_size = rd32(&header[4]);
-                        data_size = rd32(&header[8]);
-                        if (FATBOOT_HEADER_SIZE + text_size + data_size != file_size)
+                        (void)payload_size;
+                        if (boot_image_validate_file_size(file_size, text_size,
+                                                          data_size) != BOOT_IMAGE_OK)
                             return -6;
                         data_out = (uint8_t *)(dst + text_size);
                     }
-                } else if (file_off < FATBOOT_HEADER_SIZE + text_size) {
+                } else if (file_off < BOOT_IMAGE_HEADER_SIZE + text_size) {
                     *text_out++ = byte;
-                } else if (file_off < FATBOOT_HEADER_SIZE + text_size + data_size) {
+                } else if (file_off < BOOT_IMAGE_HEADER_SIZE + text_size + data_size) {
                     *data_out++ = byte;
                 }
             }

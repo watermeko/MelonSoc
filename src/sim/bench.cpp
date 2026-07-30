@@ -88,6 +88,158 @@ struct UartRxStim {
   }
 };
 
+struct UartTxMonitor {
+  enum State { IDLE, START, DATA, STOP } state = IDLE;
+  uint32_t baud_ticks = 234;
+  uint32_t ticks_left = 0;
+  uint8_t byte = 0;
+  int bit_index = 0;
+
+  void set_params(uint32_t clk_hz, uint32_t baud) {
+    if (baud == 0) baud = 115200;
+    uint32_t ticks = clk_hz / baud;
+    if (ticks == 0) ticks = 1;
+    baud_ticks = ticks;
+  }
+
+  int tick(int line) {
+    switch (state) {
+      case IDLE:
+        if (line == 0) {
+          state = START;
+          ticks_left = baud_ticks / 2;
+        }
+        break;
+      case START:
+        if (ticks_left > 0) {
+          --ticks_left;
+        } else if (line == 0) {
+          state = DATA;
+          bit_index = 0;
+          byte = 0;
+          ticks_left = baud_ticks;
+        } else {
+          state = IDLE;
+        }
+        break;
+      case DATA:
+        if (ticks_left > 0) {
+          --ticks_left;
+        } else {
+          byte |= static_cast<uint8_t>((line != 0) << bit_index);
+          if (bit_index == 7)
+            state = STOP;
+          else
+            ++bit_index;
+          ticks_left = baud_ticks;
+        }
+        break;
+      case STOP:
+        if (ticks_left > 0) {
+          --ticks_left;
+        } else {
+          state = IDLE;
+          return line != 0 ? static_cast<int>(byte) : -1;
+        }
+        break;
+    }
+    return -1;
+  }
+};
+
+struct XmodemSender {
+  enum State { WAIT_C, WAIT_ACK, WAIT_EOT_ACK, DONE, FAILED } state = WAIT_C;
+  std::string image;
+  uint32_t offset = 0;
+  uint8_t block_no = 1;
+  uint32_t retries = 0;
+  int corrupt_block = -1;
+  bool corrupted_once = false;
+
+  static uint16_t crc16_ccitt(const uint8_t* data, size_t size) {
+    uint32_t crc = 0;
+    for (size_t i = 0; i < size; ++i) {
+      crc ^= static_cast<uint32_t>(data[i]) << 8;
+      for (int bit = 0; bit < 8; ++bit) {
+        if (crc & 0x8000u)
+          crc = (crc << 1) ^ 0x1021u;
+        else
+          crc <<= 1;
+        crc &= 0xffffu;
+      }
+    }
+    return static_cast<uint16_t>(crc);
+  }
+
+  void enqueue_frame(UartRxStim& uart) {
+    std::array<uint8_t, 128> data{};
+    data.fill(0x1A);
+    size_t remaining = image.size() - offset;
+    size_t count = remaining < data.size() ? remaining : data.size();
+    for (size_t i = 0; i < count; ++i)
+      data[i] = static_cast<uint8_t>(image[offset + i]);
+
+    uart.enqueue_byte(0x01);
+    uart.enqueue_byte(block_no);
+    uart.enqueue_byte(static_cast<uint8_t>(0xFFu - block_no));
+    for (uint8_t byte : data)
+      uart.enqueue_byte(byte);
+
+    uint16_t crc = crc16_ccitt(data.data(), data.size());
+    if (static_cast<int>(block_no) == corrupt_block && !corrupted_once) {
+      crc ^= 0x0001u;
+      corrupted_once = true;
+    }
+    uart.enqueue_byte(static_cast<uint8_t>(crc >> 8));
+    uart.enqueue_byte(static_cast<uint8_t>(crc));
+    state = WAIT_ACK;
+  }
+
+  void on_tx_byte(int byte, UartRxStim& uart) {
+    if (byte < 0 || state == DONE || state == FAILED)
+      return;
+
+    if (state == WAIT_C && byte == 'C') {
+      if (image.empty()) {
+        state = FAILED;
+        return;
+      }
+      enqueue_frame(uart);
+      return;
+    }
+
+    if (state == WAIT_ACK) {
+      if (byte == 0x06) {
+        size_t remaining = image.size() - offset;
+        offset += remaining < 128 ? remaining : 128;
+        retries = 0;
+        if (offset >= image.size()) {
+          uart.enqueue_byte(0x04);
+          state = WAIT_EOT_ACK;
+        } else {
+          ++block_no;
+          enqueue_frame(uart);
+        }
+      } else if (byte == 0x15) {
+        if (++retries >= 16)
+          state = FAILED;
+        else
+          enqueue_frame(uart);
+      } else if (byte == 0x18) {
+        state = FAILED;
+      }
+      return;
+    }
+
+    if (state == WAIT_EOT_ACK) {
+      if (byte == 0x06)
+        state = DONE;
+      else if (byte == 0x18)
+        state = FAILED;
+    }
+  }
+};
+
 struct SimArgs {
   bool interactive = true;
   uint64_t max_cycles = 0;
@@ -95,6 +247,8 @@ struct SimArgs {
   uint32_t clk_hz = 27'000'000;
   uint32_t uart_baud = 115'200;
   std::vector<std::string> sim_args;
+  std::string xmodem_image;
+  int xmodem_corrupt_block = -1;
 };
 
 struct DdrAppModel {
@@ -150,6 +304,8 @@ static void print_help(const char* argv0) {
       "  --uart-baud <N>         UART baud (default: 115200)\n"
       "  --sim-arg <cmd>         Shell command to inject via UART at startup.\n"
       "                          Repeatable; each is sent with a 1M-cycle gap.\n"
+      "  --xmodem-image <file>   Auto-run uartload and send BOOT.BIN.\n"
+      "  --xmodem-corrupt-block <N>  Corrupt block N once for retry testing.\n"
       "  --help                  Show this help\n",
       argv0);
 }
@@ -172,6 +328,10 @@ static SimArgs parse_args(int argc, char** argv) {
       a.uart_baud = parse_u32(argv[++i], a.uart_baud);
     } else if (arg == "--sim-arg" && i + 1 < argc) {
       a.sim_args.push_back(argv[++i]);
+    } else if (arg == "--xmodem-image" && i + 1 < argc) {
+      a.xmodem_image = argv[++i];
+    } else if (arg == "--xmodem-corrupt-block" && i + 1 < argc) {
+      a.xmodem_corrupt_block = static_cast<int>(parse_u32(argv[++i], 0));
     } else {
       std::fprintf(stderr, "Unknown arg: %s\n", arg.c_str());
       print_help(argv[0]);
@@ -253,6 +413,19 @@ int main(int argc, char** argv) {
 
   UartRxStim uart;
   uart.set_params(args.clk_hz, args.uart_baud);
+  UartTxMonitor tx_monitor;
+  tx_monitor.set_params(args.clk_hz, args.uart_baud);
+
+  XmodemSender xmodem;
+  if (!args.xmodem_image.empty()) {
+    xmodem.image = read_file_all(args.xmodem_image);
+    xmodem.corrupt_block = args.xmodem_corrupt_block;
+    if (xmodem.image.empty()) {
+      std::fprintf(stderr, "Cannot read XMODEM image: %s\n",
+                   args.xmodem_image.c_str());
+      return 2;
+    }
+  }
 
   if (!args.max_cycles_user && !::isatty(STDIN_FILENO)) {
     args.max_cycles = 80'000'000;
@@ -268,7 +441,10 @@ int main(int argc, char** argv) {
   bool eof_seen = false;
   uint32_t poll_div = 0;
   size_t sim_arg_idx = 0;
-  bool sim_args_all_sent = args.sim_args.empty();
+  std::vector<std::string> sim_args = args.sim_args;
+  if (!args.xmodem_image.empty() && sim_args.empty())
+    sim_args.push_back("uartload");
+  bool sim_args_all_sent = sim_args.empty();
 
   uint64_t i = 0;
   while (!Verilated::gotFinish()) {
@@ -279,10 +455,10 @@ int main(int argc, char** argv) {
     if (!sim_args_all_sent) {
       uint64_t trigger_cycle = 2'000'000 + sim_arg_idx * 1'000'000;
       if (i == trigger_cycle) {
-        uart.enqueue_bytes(args.sim_args[sim_arg_idx]);
+        uart.enqueue_bytes(sim_args[sim_arg_idx]);
         uart.enqueue_byte('\n');
         sim_arg_idx++;
-        if (sim_arg_idx >= args.sim_args.size())
+        if (sim_arg_idx >= sim_args.size())
           sim_args_all_sent = true;
       }
     }
@@ -301,7 +477,22 @@ int main(int argc, char** argv) {
     dut.rxd = uart.line;
 
     tick(dut, ddr, time);
+    xmodem.on_tx_byte(tx_monitor.tick(dut.txd), uart);
     ++i;
+  }
+
+  if (!args.xmodem_image.empty()) {
+    if (xmodem.state == XmodemSender::DONE) {
+      std::fprintf(stderr, "[XMODEM] transfer complete\n");
+    } else if (xmodem.state == XmodemSender::FAILED) {
+      std::fprintf(stderr, "[XMODEM] transfer failed\n");
+      dut.final();
+      return 1;
+    } else {
+      std::fprintf(stderr, "[XMODEM] transfer did not finish\n");
+      dut.final();
+      return 1;
+    }
   }
 
   dut.final();

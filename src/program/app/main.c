@@ -11,6 +11,8 @@
 #include "lcd.h"
 #include "print.h"
 #include "fatboot.h"
+#include "boot_image.h"
+#include "xmodem.h"
 
 #if defined(CONFIG_APP_TEST_CSR) || defined(CONFIG_APP_TEST_IRQ) || defined(CONFIG_APP_TEST_MTIME)
 #include "test_csr.h"
@@ -23,6 +25,14 @@
 void raystones_run(void);
 
 typedef void (*entry_fn)(void);
+
+static void boot_jump_to_ddr(void) {
+    asm volatile("csrwi mstatus, 0\ncsrwi mie, 0" ::: "memory");
+    ((entry_fn)BOOT_IMAGE_LOAD_ADDR)();
+
+    for (;;) {
+    }
+}
 
 #ifdef CONFIG_APP_TEST_M
 static inline uint64_t rdcycle(void) {
@@ -170,6 +180,7 @@ static void shell_help(void) {
     puts("  ddr probe|rd|wr    - access DDR via DDR3 APP MMIO");
     puts("  raystones          - run the raystones benchmark");
     puts("  sdload             - load BOOT.BIN from SD and jump to DDR app");
+    puts("  uartload           - receive BOOT.BIN via XMODEM-CRC and jump to DDR app");
     puts("  lcd                - draw colorbar on the DDR-backed LCD framebuffer");
 #ifdef CONFIG_APP_TEST_M
     puts("  test-m             - test M extension (multiply/divide)");
@@ -391,11 +402,27 @@ static void shell_sdload(const char *arg) {
         return;
     }
 
-    asm volatile("csrwi mstatus, 0\ncsrwi mie, 0" ::: "memory");
-    ((entry_fn)0x80000000u)();
+    boot_jump_to_ddr();
+}
 
-    for (;;) {
+static void shell_uartload(const char *arg) {
+    if (arg && *arg) {
+        puts("Usage: uartload");
+        return;
     }
+
+    puts("Bootloader: UART XMODEM DDR boot");
+    puts("Send BOOT.BIN using xmodem crc now.");
+
+    uint32_t size = 0;
+    int rc = xmodem_load_boot_image(BOOT_IMAGE_LOAD_ADDR, &size);
+    if (rc != 0) {
+        printf("Bootloader: UART load failed rc=%d\n", rc);
+        return;
+    }
+
+    printf("Bootloader: UART image ready (%u bytes)\n", (unsigned)size);
+    boot_jump_to_ddr();
 }
 
 #ifdef CONFIG_APP_TEST_M
@@ -618,6 +645,8 @@ int main(void) {
             shell_ddr(arg);
         } else if (str_equals(cmd, "sdload")) {
             shell_sdload(arg);
+        } else if (str_equals(cmd, "uartload")) {
+            shell_uartload(arg);
         } else if (str_equals(cmd, "lcd")) {
             shell_lcd(arg);
 #ifdef CONFIG_APP_TEST_M

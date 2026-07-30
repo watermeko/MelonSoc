@@ -45,15 +45,25 @@ SIM_ARGS ?=
 # For multiple commands, repeat --sim-arg directly:
 #   make simulate SIM_ARGS="--sim-arg test-mtime --sim-arg test-msip"
 SIM_CMD ?=
+SIM_XMODEM_IMAGE ?=
+SIM_XMODEM_CORRUPT_BLOCK ?=
 ifneq ($(SIM_CMD),)
     SIM_ARGS += --sim-arg "$(SIM_CMD)"
+endif
+ifneq ($(SIM_XMODEM_IMAGE),)
+    SIM_ARGS += --xmodem-image "$(SIM_XMODEM_IMAGE)"
+endif
+ifneq ($(SIM_XMODEM_CORRUPT_BLOCK),)
+    SIM_ARGS += --xmodem-corrupt-block "$(SIM_XMODEM_CORRUPT_BLOCK)"
 endif
 
 TARGET_NAME = program
 _S = program/boot/$(TARGET_NAME).s
 _C_SOURCES = program/utils/print.c \
              program/app/main.c \
+             program/boot/boot_image.c \
              program/boot/fatboot.c \
+             program/boot/xmodem.c \
              program/drivers/ddr.c \
              program/drivers/gpio.c \
              program/drivers/i2c.c \
@@ -118,6 +128,8 @@ DEPFLAGS = -MMD -MP
 
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
+TARGET_MAP = $(BUILD_DIR)/$(TARGET_NAME).map
+DDR_APP_MAP = $(BUILD_DIR)/ddr_app.map
 
 .PHONY: all build clean dirs simulate menuconfig guiconfig defconfig
 
@@ -176,12 +188,14 @@ DEP_FILES = $(sort $(OBJS:.o=.d) $(DDR_APP_OBJS:.o=.d))
 
 $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 	@echo "Linking object files to $@"
-	$(CC) $(ARCH_FLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
+	$(CC) $(ARCH_FLAGS) $(LDFLAGS) -Wl,-Map=$(TARGET_MAP) $(OBJS) $(LIBS) -o $@
+	@$(SIZE) -A $@ | tee $(BUILD_DIR)/$(TARGET_NAME).size
 	@echo ""
 
 $(DDR_APP_ELF): $(DDR_APP_OBJS) $(DDR_LINKER_SCRIPT) | dirs
 	@echo "Linking DDR app to $@"
-	$(CC) $(DDR_ARCH_FLAGS) -nostartfiles -T$(DDR_LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -Wl,--no-relax -flto $(DDR_APP_OBJS) $(LIBS) -o $@
+	$(CC) $(DDR_ARCH_FLAGS) -nostartfiles -T$(DDR_LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -Wl,--no-relax -Wl,-Map=$(DDR_APP_MAP) -flto $(DDR_APP_OBJS) $(LIBS) -o $@
+	@$(SIZE) -A $@ | tee $(BUILD_DIR)/ddr_app.size
 
 $(DDR_APP_TEXT_BIN): $(DDR_APP_ELF) | dirs
 	@echo "Extracting DDR app .text to $@"
