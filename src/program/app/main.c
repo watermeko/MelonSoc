@@ -7,7 +7,6 @@
 #include "sdcard.h"
 #include "timer.h"
 #include "clint.h"
-#include "ddr.h"
 #include "lcd.h"
 #include "print.h"
 #include "fatboot.h"
@@ -108,46 +107,6 @@ static int parse_two_u32_dec(const char *s, uint32_t *a, uint32_t *b) {
     return *s == 0;
 }
 
-static int parse_u32_auto(const char *s, uint32_t *out) {
-    if (!s) return 0;
-    while (*s == ' ') ++s;
-    if (*s == 0) return 0;
-    int base = 10;
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-        base = 16;
-        s += 2;
-        if (*s == 0) return 0;
-    }
-    uint32_t value = 0;
-    int any = 0;
-    for (; *s; ++s) {
-        int digit = -1;
-        char c = *s;
-        if (c >= '0' && c <= '9') digit = (int)(c - '0');
-        else if (base == 16 && c >= 'a' && c <= 'f') digit = (int)(c - 'a') + 10;
-        else if (base == 16 && c >= 'A' && c <= 'F') digit = (int)(c - 'A') + 10;
-        else return 0;
-        any = 1;
-        if (value > (0xFFFFFFFFu - (uint32_t)digit) / (uint32_t)base) return 0;
-        value = value * (uint32_t)base + (uint32_t)digit;
-    }
-    if (!any) return 0;
-    *out = value;
-    return 1;
-}
-
-static char *next_token(char **ps) {
-    if (!ps || !*ps) return 0;
-    char *s = *ps;
-    while (*s == ' ') ++s;
-    if (*s == 0) { *ps = s; return 0; }
-    char *tok = s;
-    while (*s && *s != ' ') ++s;
-    if (*s) { *s = 0; ++s; }
-    *ps = s;
-    return tok;
-}
-
 static int wait_ticks_or_keypress(uint32_t ticks) {
     uint32_t start = timer_get_count();
     while ((uint32_t)(timer_get_count() - start) < ticks) {
@@ -181,7 +140,6 @@ static void shell_help(void) {
     puts("  print <text>       - print text");
     puts("  i2c_scan           - scan I2C 7-bit addresses");
     puts("  sdcard_rd <skip> <count> - read sector 0 and hex dump bytes");
-    puts("  ddr probe|rd|wr    - access DDR via DDR3 APP MMIO");
     puts("  raystones          - run the raystones benchmark");
     puts("  sdload             - load BOOT.BIN from SD and jump to DDR app");
     puts("  uartload           - receive BOOT.BIN via XMODEM-CRC and jump to DDR app");
@@ -299,87 +257,6 @@ static void shell_sdcard_rd(const char *arg) {
         if ((i & 15u) == 15u) putchar('\n');
     }
     if ((count & 15u) != 0u) putchar('\n');
-}
-
-static void shell_ddr(const char *arg) {
-    if (!arg || *arg == 0) {
-        puts("Usage:");
-        puts("  ddr probe");
-        puts("  ddr rd <app_addr> [count]");
-        puts("  ddr wr <app_addr> <w0> <w1> <w2> <w3>");
-        puts("Notes:");
-        puts("  - app_addr is DDR IP app addr (often counted in 2-byte units).");
-        puts("  - Each op transfers 128-bit (4x32). count increments app_addr by +8.");
-        puts("  - Numbers accept decimal or 0xHEX.");
-        return;
-    }
-    char *p = (char *)arg;
-    char *sub = next_token(&p);
-    if (!sub) { puts("Usage: ddr probe|rd|wr ..."); return; }
-
-    if (str_equals(sub, "probe")) {
-        uint32_t st = ddr_get_status();
-        printf("DDR STATUS = 0x%x\n", st);
-        printf("  present=%d init=%d busy=%d done=%d err=%d cmd_rdy=%d wdata_rdy=%d rd_valid=%d\n",
-               (st >> DDR_STATUS_PRESENT_BIT) & 1u,
-               (st >> DDR_STATUS_INIT_DONE_BIT) & 1u,
-               (st >> DDR_STATUS_BUSY_BIT) & 1u,
-               (st >> DDR_STATUS_DONE_BIT) & 1u,
-               (st >> DDR_STATUS_ERR_BIT) & 1u,
-               (st >> DDR_STATUS_CMD_RDY_BIT) & 1u,
-               (st >> DDR_STATUS_WR_DATA_RDY_BIT) & 1u,
-               (st >> DDR_STATUS_RD_VALID_BIT) & 1u);
-        return;
-    }
-    if (!ddr_present()) { puts("Error: DDR APP MMIO not present (not wired/decoded?)"); return; }
-    if (!ddr_init_done()) { puts("Error: DDR init_calib_complete is 0 (DDR not ready)"); return; }
-
-    if (str_equals(sub, "rd")) {
-        char *tok_addr = next_token(&p);
-        uint32_t addr;
-        if (!tok_addr || !parse_u32_auto(tok_addr, &addr)) {
-            puts("Usage: ddr rd <app_addr> [count]");
-            return;
-        }
-        uint32_t count = 1;
-        char *tok_count = next_token(&p);
-        if (tok_count && *tok_count) {
-            if (!parse_u32_auto(tok_count, &count) || count == 0) {
-                puts("Error: invalid count");
-                return;
-            }
-        }
-        for (uint32_t i = 0; i < count; ++i) {
-            uint32_t out[4];
-            int rc = ddr_read128(addr, out);
-            if (rc != 0) { printf("Error: ddr_read128 failed (rc=%d)\n", rc); return; }
-            printf("DDR[0x%x] = %x %x %x %x\n", addr, out[3], out[2], out[1], out[0]);
-            addr += 8u;
-        }
-        return;
-    }
-
-    if (str_equals(sub, "wr")) {
-        char *tok_addr = next_token(&p);
-        uint32_t addr;
-        if (!tok_addr || !parse_u32_auto(tok_addr, &addr)) {
-            puts("Usage: ddr wr <app_addr> <w0> <w1> <w2> <w3>");
-            return;
-        }
-        uint32_t w[4];
-        for (int i = 0; i < 4; ++i) {
-            char *tok = next_token(&p);
-            if (!tok || !parse_u32_auto(tok, &w[i])) {
-                puts("Usage: ddr wr <app_addr> <w0> <w1> <w2> <w3>");
-                return;
-            }
-        }
-        int rc = ddr_write128(addr, w);
-        if (rc != 0) { printf("Error: ddr_write128 failed (rc=%d)\n", rc); return; }
-        puts("OK");
-        return;
-    }
-    puts("Unknown ddr subcommand. Use: ddr probe|rd|wr");
 }
 
 static void shell_lcd(const char *arg) {
@@ -648,8 +525,6 @@ int main(void) {
             shell_blink(arg);
         } else if (str_equals(cmd, "sdcard_rd")) {
             shell_sdcard_rd(arg);
-        } else if (str_equals(cmd, "ddr")) {
-            shell_ddr(arg);
         } else if (str_equals(cmd, "sdload")) {
             shell_sdload(arg);
         } else if (str_equals(cmd, "uartload")) {

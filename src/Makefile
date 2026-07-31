@@ -65,7 +65,6 @@ _C_SOURCES = program/utils/print.c \
              program/boot/boot_image.c \
              program/boot/fatboot.c \
              program/boot/xmodem.c \
-             program/drivers/ddr.c \
              program/drivers/gpio.c \
              program/drivers/i2c.c \
              program/drivers/spi.c \
