@@ -13,7 +13,7 @@
 // The module reads-only; it never asserts app_wren. The DDR APP port is
 // arbitrated in the SoC top between the CPU (priority) and this DMA.
 module lcd_dma #(
-        parameter logic [31:0] FB_BASE   = 32'h8010_0000,
+        parameter logic [31:0] FB_BASE   = 32'h8700_0000,
         localparam int unsigned LCD_W    = 480,
         localparam int unsigned LCD_H    = 272,
         localparam int unsigned BEAT_PIX  = 8,

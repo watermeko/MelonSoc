@@ -7,7 +7,7 @@
 // The hardware LCD DMA streams this region to the panel continuously.
 #define LCD_WIDTH  480
 #define LCD_HEIGHT 272
-#define LCD_FB_BASE 0x80100000u   // fixed framebuffer base (256 KiB region)
+#define LCD_FB_BASE 0x87000000u   // fixed framebuffer base (256 KiB region)
 
 static inline volatile uint16_t *lcd_fb(void) {
     return (volatile uint16_t *)(uintptr_t)LCD_FB_BASE;

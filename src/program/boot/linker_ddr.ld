@@ -1,11 +1,11 @@
 MEMORY {
    /* Keep the application below the LCD framebuffer. */
-   DDR_APP (RWX) : ORIGIN = 0x80000000, LENGTH = 0x00100000
+   DDR_APP (RWX) : ORIGIN = 0x80000000, LENGTH = 0x07000000
 }
 
 ENTRY(_start)
 
-STACK_SIZE = 0x1000;
+STACK_SIZE = 0x200000;
 
 SECTIONS {
     .text : {

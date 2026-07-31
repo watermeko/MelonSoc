@@ -6,7 +6,7 @@
 #define BOOT_IMAGE_MAGIC       0x5244444Du /* "MDDR" in little endian */
 #define BOOT_IMAGE_HEADER_SIZE 12u
 #define BOOT_IMAGE_LOAD_ADDR   0x80000000u
-#define BOOT_IMAGE_LOAD_LIMIT  0x80100000u /* LCD framebuffer starts here */
+#define BOOT_IMAGE_LOAD_LIMIT  0x87000000u /* LCD framebuffer starts here */
 
 enum boot_image_error {
     BOOT_IMAGE_OK = 0,
