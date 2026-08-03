@@ -3,24 +3,26 @@
 #include "task.h"
 #include "timers.h"
 #include "test_rtos.h"
-#include "uart.h"
 #include "print.h"
+#include "queue.h"
 
-extern int puts(const char *s);
+static QueueHandle_t g_print_queue;
 
-static void rtos_puts(const char *s)
+static BaseType_t queue_print(const char *message, TickType_t ticks_to_wait)
 {
-    uint32_t mstatus;
-    uint32_t mie_mask = 8u;
+    return xQueueSendToBack(g_print_queue, &message, ticks_to_wait);
+}
 
-    asm volatile("csrrc %0, mstatus, %1" : "=r"(mstatus) : "r"(mie_mask) : "memory");
+static void printer_task(void *param)
+{
+    const char *message;
 
-    while (*s != '\0')
-        uart_putc_blocking((uint8_t)*s++);
-    uart_putc_blocking((uint8_t)'\n');
+    (void)param;
 
-    if ((mstatus & mie_mask) != 0)
-        asm volatile("csrs mstatus, %0" :: "r"(mie_mask) : "memory");
+    for (;;) {
+        if (xQueueReceive(g_print_queue, &message, portMAX_DELAY) == pdPASS)
+            puts(message);
+    }
 }
 
 static void task_a(void *param)
@@ -28,7 +30,7 @@ static void task_a(void *param)
     (void)param;
 
     for (;;) {
-        rtos_puts("[TaskA] ping");
+        queue_print("[TaskA] ping", portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
@@ -38,7 +40,7 @@ static void task_b(void *param)
     (void)param;
 
     for (;;) {
-        rtos_puts("[TaskB] pong");
+        queue_print("[TaskB] pong", portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 }
@@ -46,14 +48,14 @@ static void task_b(void *param)
 static void task_self_delete(void *param)
 {
     (void)param;
-    rtos_puts("[TaskC] Hello - I will delete myself now.");
+    queue_print("[TaskC] Hello - I will delete myself now.", portMAX_DELAY);
     vTaskDelete(NULL);
 }
 
 static void timer_oneshot_cb(TimerHandle_t xTimer)
 {
     (void)xTimer;
-    rtos_puts("[Timer] one-shot fired (300 ms)");
+    queue_print("[Timer] one-shot fired (300 ms)", 0);
 }
 
 static unsigned periodic_count = 0;
@@ -64,14 +66,14 @@ static void timer_periodic_cb(TimerHandle_t xTimer)
     periodic_count++;
 
     if (periodic_count == 1)
-        rtos_puts("[Timer] periodic tick 1 (350 ms)");
+        queue_print("[Timer] periodic tick 1 (350 ms)", 0);
     else if (periodic_count == 2)
-        rtos_puts("[Timer] periodic tick 2 (350 ms)");
+        queue_print("[Timer] periodic tick 2 (350 ms)", 0);
     else if (periodic_count == 3)
-        rtos_puts("[Timer] periodic tick 3 (350 ms)");
+        queue_print("[Timer] periodic tick 3 (350 ms)", 0);
 
     if (periodic_count >= 3) {
-        rtos_puts("[Timer] periodic stopping after 3 ticks.");
+        queue_print("[Timer] periodic stopping after 3 ticks.", 0);
         xTimerStop(xTimer, 0);
     }
 }
@@ -106,6 +108,18 @@ void shell_test_rtos(const char *arg)
     vPortFree(p);
     printf("After vPortFree(p): free=%u\n",
            (unsigned)xPortGetFreeHeapSize());
+
+    g_print_queue = xQueueCreate(10, sizeof(const char *));
+    if (g_print_queue == NULL) {
+        puts("[FAIL] xQueueCreate(print) failed");
+        while (1);
+    }
+
+    rc = xTaskCreate(printer_task, "Printer", 512, NULL, 3, NULL);
+    if (rc != pdPASS) {
+        puts("[FAIL] xTaskCreate(Printer) failed");
+        while (1);
+    }
 
     rc = xTaskCreate(task_a, "A", 1024, NULL, 2, NULL);
     printf("After TaskA: free=%u minFree=%u\n",

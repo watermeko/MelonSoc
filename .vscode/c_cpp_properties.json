@@ -1,0 +1,36 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "compilerPath": "/usr/bin/riscv64-unknown-elf-gcc",
+            "compilerArgs": [
+                "-march=rv32imc_zicsr",
+                "-mabi=ilp32",
+                "-ffreestanding",
+                "-ffunction-sections",
+                "-fdata-sections",
+                "-D__riscv_xlen=32"
+            ],
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/src/program",
+                "${workspaceFolder}/src/program/app",
+                "${workspaceFolder}/src/program/boot",
+                "${workspaceFolder}/src/program/ddr_app",
+                "${workspaceFolder}/src/program/ddr_app/FreeRTOS",
+                "${workspaceFolder}/src/program/ddr_app/FreeRTOS/include",
+                "${workspaceFolder}/src/program/ddr_app/FreeRTOS/portable/GCC/RISC-V",
+                "${workspaceFolder}/src/program/ddr_app/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions",
+                "${workspaceFolder}/src/program/drivers",
+                "${workspaceFolder}/src/program/utils",
+                "${workspaceFolder}/src/build/include",
+                "/usr/lib/picolibc/riscv64-unknown-elf/include"
+
+            ],
+            "intelliSenseMode": "linux-gcc-x64",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17"
+        }
+    ],
+    "version": 4
+}
