@@ -49,6 +49,12 @@
             localparam logic [31:0] DDR_BASE_ADDR      = 32'h8000_0000;
             localparam logic [31:0] DDR_SIZE_BYTES     = 32'h0800_0000; // 1Gbit = 128MiB
             localparam logic [31:0] DDR_END_ADDR       = DDR_BASE_ADDR + DDR_SIZE_BYTES;
+            localparam int unsigned PROGROM_WORDS     = 8192; // 32KB / 4
+            localparam int unsigned DATARAM_WORDS     = 8192; // 32KB / 4
+            localparam logic [31:0] DATARAM_BASE_ADDR  = 32'h0001_0000;
+            localparam logic [31:0] DATARAM_SIZE_BYTES = DATARAM_WORDS * 4;
+            localparam logic [31:0] DATARAM_END_ADDR   = DATARAM_BASE_ADDR + DATARAM_SIZE_BYTES;
+
 
             // 地址的第高20位用于区分外设区域
             localparam logic [31:0] MMIO_REGION_MASK   = 32'hFFFF_0000;
@@ -67,6 +73,14 @@
                 return (addr >= DDR_BASE_ADDR) && (addr < DDR_END_ADDR);
             endfunction
 
+            function automatic logic is_dataram_region(input logic [31:0] addr);
+                return (addr >= DATARAM_BASE_ADDR) && (addr < DATARAM_END_ADDR);
+            endfunction
+
+            function automatic logic supports_atomic(input logic [31:0] addr);
+                return is_dataram_region(addr) || is_ddr_region(addr);
+            endfunction
+
             localparam int unsigned UART_RX_VALID_BIT     = 0;
             localparam int unsigned UART_RX_OVERRUN_BIT   = 1;
             localparam int unsigned UART_RX_FRAMEERR_BIT  = 2;
@@ -76,8 +90,6 @@
             localparam int unsigned UART_BAUD_RATE            = 115200;
 
             localparam int unsigned CLK_FREQ_HZ          = 27_000_000;
-            localparam int unsigned PROGROM_WORDS        = 8192; // 32KB / 4
-            localparam int unsigned DATARAM_WORDS        = 8192; // 32KB / 4
         endpackage
 
 `endif

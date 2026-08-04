@@ -26,4 +26,8 @@ config APP_TEST_SHIFT
 	bool "Enable test-shift (SRA/SRAI and uint16 CRC)"
 	default y
 
+config APP_TEST_A
+	bool "Enable test-a (RISC-V A extension LR/SC/AMO)"
+	default y
+
 endmenu

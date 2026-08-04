@@ -58,6 +58,7 @@ module top(
     wire [127:0] cpu_app_rdata;
     wire [5:0]   cpu_app_burst_number;
     wire         cpu_app_idle;
+    wire         cpu_app_lock;
 
     // Common (DDR3 IP inputs) APP signals driven by the arbiter
     wire [27:0]  ddr_app_addr;
@@ -164,7 +165,8 @@ module top(
 
             .ddr_init_calib_complete(ddr_init_calib_complete),
             .ddr_app_burst_number(cpu_app_burst_number),
-            .ddr_app_idle(cpu_app_idle)
+            .ddr_app_idle(cpu_app_idle),
+            .ddr_app_lock(cpu_app_lock)
         );
 
     Gowin_rPLL pll(
@@ -258,6 +260,19 @@ module top(
     logic [1:0] inflight_lcd;   // outstanding LCD read beats (0..2)
     wire lcd_issue  = lcd_grant && lcd_app_cmd_en && lcd_app_cmd_rdy;
     wire lcd_retire = ddr_app_rdata_valid && (inflight_lcd != 0);
+    logic cpu_app_lock_meta;
+    logic cpu_app_lock_sync;
+
+    always_ff @(posedge clk_x1 or negedge lcd_rst_n) begin
+        if (!lcd_rst_n) begin
+            cpu_app_lock_meta <= 1'b0;
+            cpu_app_lock_sync <= 1'b0;
+        end
+        else begin
+            cpu_app_lock_meta <= cpu_app_lock;
+            cpu_app_lock_sync <= cpu_app_lock_meta;
+        end
+    end
 
     always_ff @(posedge clk_x1 or negedge lcd_rst_n) begin
         if (!lcd_rst_n) begin
@@ -267,9 +282,9 @@ module top(
         else begin
             // grant/handoff
             if (!lcd_grant)
-                lcd_grant <= cpu_app_idle && (inflight_lcd == 0) && lcd_app_cmd_en;
+                lcd_grant <= !cpu_app_lock_sync && cpu_app_idle && (inflight_lcd == 0) && lcd_app_cmd_en;
             // release when no LCD beat is in flight and LCD no longer requests
-            else if (inflight_lcd == 0 && !lcd_app_cmd_en)
+            else if (inflight_lcd == 0 && (!lcd_app_cmd_en || cpu_app_lock_sync))
                 lcd_grant <= 1'b0;
 
             // count outstanding LCD beats: issue when (lcd_grant & cmd_en & rdy)

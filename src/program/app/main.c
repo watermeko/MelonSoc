@@ -25,6 +25,10 @@
 #include "test_shift.h"
 #endif
 
+#ifdef CONFIG_APP_TEST_A
+#include "test_a.h"
+#endif
+
 void raystones_run(void);
 
 typedef void (*entry_fn)(void);
@@ -161,6 +165,9 @@ static void shell_help(void) {
 #endif
 #ifdef CONFIG_APP_TEST_SHIFT
     puts("  test-shift         - test SRA/SRAI and uint16 CRC");
+#endif
+#ifdef CONFIG_APP_TEST_A
+    puts("  test-a             - test RV32A LR/SC and AMO instructions");
 #endif
 }
 
@@ -554,6 +561,10 @@ int main(void) {
 #ifdef CONFIG_APP_TEST_SHIFT
         } else if (str_equals(cmd, "test-shift")) {
             shell_test_shift(arg);
+#endif
+#ifdef CONFIG_APP_TEST_A
+        } else if (str_equals(cmd, "test-a")) {
+            shell_test_a(arg);
 #endif
         } else {
             puts("Unknown command. Type 'help'.");

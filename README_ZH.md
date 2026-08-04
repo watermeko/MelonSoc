@@ -1,9 +1,10 @@
 [English](README.md)
 
 # 简介
-一个基于RISC-V的SoC，使用SystemVerilog编写，运行在 Tang Premier 20K 上。支持RV32IMC指令集，五级流水线。支持中断。
+一个基于RISC-V的SoC，使用SystemVerilog编写，运行在 Tang Premier 20K 上。支持RV32IMAC指令集，五级流水线。支持中断。
 外设有I2C、GPIO、UART、TIMER、SPI。使用DDR内存。
 移植了FreeRTOS。
+使用Uart实现了Bootloader。
 
 # 运行
 使用的软件：riscv交叉编译工具, verilator, picocom, pyserial, gowin eda/programmer

@@ -40,8 +40,12 @@ module SOC (
         input  logic [127:0] ddr_app_rdata,
 
         input  logic         ddr_init_calib_complete,
-        output logic [5:0]   ddr_app_burst_number,
-        output logic         ddr_app_idle     // CPU DDR bridge APP FSM idle
+         output logic [5:0]   ddr_app_burst_number,
+         output logic         ddr_app_idle,    // CPU DDR bridge APP FSM idle
+         output logic         ddr_app_lock,
+         output logic         write_commit_valid,
+         output logic [31:0]  write_commit_addr,
+         output logic [3:0]   write_commit_sel
     );
     import soc_pkg::*;
 
@@ -62,12 +66,23 @@ module SOC (
     wb_if mmio_sd_bus();
     wb_if mmio_clint_bus();
 
+    logic ext_write_valid;
+    logic [31:0] ext_write_addr;
+    logic [3:0] ext_write_sel;
+
+    assign ext_write_valid = 1'b0;
+    assign ext_write_addr = 32'b0;
+    assign ext_write_sel = 4'b0;
+
     cpu u_cpu (
             .clk(clk),
             .rst_n(rst_n),
             .ext_irq(timer_irq),
             .sw_irq(clint_sw_irq),
             .timer_irq(clint_timer_irq),
+            .ext_write_valid(ext_write_valid),
+            .ext_write_addr(ext_write_addr),
+            .ext_write_sel(ext_write_sel),
             .instr(instr_bus),
             .data(cpu_data_bus)
         );
@@ -96,6 +111,7 @@ module SOC (
         ddr_instr_bus.dat_w = 32'b0;
         ddr_instr_bus.sel = 4'b1111;
         ddr_instr_bus.we = 1'b0;
+        ddr_instr_bus.lock = 1'b0;
         ddr_instr_bus.cyc = instr_ddr_pending || (instr_bus.ren && instr_is_ddr);
         ddr_instr_bus.stb = ddr_instr_bus.cyc;
     end
@@ -127,12 +143,13 @@ module SOC (
         data_is_ddr = is_ddr_region(cpu_data_bus.adr);
         data_is_ram = !data_is_mmio && !data_is_ddr;
         data_unmapped = cpu_data_bus.cyc && cpu_data_bus.stb && !data_is_mmio && !data_is_ddr &&
-                        (cpu_data_bus.adr[31:16] != 16'h0001);
+                        !is_dataram_region(cpu_data_bus.adr);
 
         ram_bus.adr   = cpu_data_bus.adr;
         ram_bus.dat_w = cpu_data_bus.dat_w;
         ram_bus.sel   = cpu_data_bus.sel;
         ram_bus.we    = cpu_data_bus.we;
+        ram_bus.lock  = cpu_data_bus.lock;
         ram_bus.cyc   = cpu_data_bus.cyc && data_is_ram && !data_unmapped;
         ram_bus.stb   = cpu_data_bus.stb && data_is_ram && !data_unmapped;
 
@@ -140,6 +157,7 @@ module SOC (
         mmio_bus.dat_w = cpu_data_bus.dat_w;
         mmio_bus.sel   = cpu_data_bus.sel;
         mmio_bus.we    = cpu_data_bus.we;
+        mmio_bus.lock  = cpu_data_bus.lock;
         mmio_bus.cyc   = cpu_data_bus.cyc && data_is_mmio;
         mmio_bus.stb   = cpu_data_bus.stb && data_is_mmio;
 
@@ -147,6 +165,7 @@ module SOC (
         ddr_data_bus.dat_w = cpu_data_bus.dat_w;
         ddr_data_bus.sel   = cpu_data_bus.sel;
         ddr_data_bus.we    = cpu_data_bus.we;
+        ddr_data_bus.lock  = cpu_data_bus.lock;
         ddr_data_bus.cyc   = cpu_data_bus.cyc && data_is_ddr;
         ddr_data_bus.stb   = cpu_data_bus.stb && data_is_ddr;
 
@@ -175,6 +194,11 @@ module SOC (
 
         cpu_data_bus.dat_r = cpu_data_rdata_q;
     end
+
+    assign ddr_app_lock = ddr_data_bus.lock;
+    assign write_commit_valid = cpu_data_bus.cyc && cpu_data_bus.stb && cpu_data_bus.ack && cpu_data_bus.we;
+    assign write_commit_addr = cpu_data_bus.adr;
+    assign write_commit_sel = cpu_data_bus.sel;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -228,6 +252,7 @@ module SOC (
         mmio_gpio_bus.dat_w = mmio_bus.dat_w;
         mmio_gpio_bus.sel   = mmio_bus.sel;
         mmio_gpio_bus.we    = mmio_bus.we;
+        mmio_gpio_bus.lock  = mmio_bus.lock;
         mmio_gpio_bus.cyc   = mmio_bus.cyc && sel_leds;
         mmio_gpio_bus.stb   = mmio_bus.stb && sel_leds;
 
@@ -235,6 +260,7 @@ module SOC (
         mmio_uart_bus.dat_w = mmio_bus.dat_w;
         mmio_uart_bus.sel   = mmio_bus.sel;
         mmio_uart_bus.we    = mmio_bus.we;
+        mmio_uart_bus.lock  = mmio_bus.lock;
         mmio_uart_bus.cyc   = mmio_bus.cyc && sel_uart;
         mmio_uart_bus.stb   = mmio_bus.stb && sel_uart;
 
@@ -242,6 +268,7 @@ module SOC (
         mmio_i2c_bus.dat_w = mmio_bus.dat_w;
         mmio_i2c_bus.sel   = mmio_bus.sel;
         mmio_i2c_bus.we    = mmio_bus.we;
+        mmio_i2c_bus.lock  = mmio_bus.lock;
         mmio_i2c_bus.cyc   = mmio_bus.cyc && sel_i2c;
         mmio_i2c_bus.stb   = mmio_bus.stb && sel_i2c;
 
@@ -249,6 +276,7 @@ module SOC (
         mmio_timer_bus.dat_w = mmio_bus.dat_w;
         mmio_timer_bus.sel   = mmio_bus.sel;
         mmio_timer_bus.we    = mmio_bus.we;
+        mmio_timer_bus.lock  = mmio_bus.lock;
         mmio_timer_bus.cyc   = mmio_bus.cyc && sel_timer;
         mmio_timer_bus.stb   = mmio_bus.stb && sel_timer;
 
@@ -256,6 +284,7 @@ module SOC (
         mmio_spi_bus.dat_w = mmio_bus.dat_w;
         mmio_spi_bus.sel   = mmio_bus.sel;
         mmio_spi_bus.we    = mmio_bus.we;
+        mmio_spi_bus.lock  = mmio_bus.lock;
         mmio_spi_bus.cyc   = mmio_bus.cyc && sel_spi;
         mmio_spi_bus.stb   = mmio_bus.stb && sel_spi;
 
@@ -263,6 +292,7 @@ module SOC (
         mmio_sd_bus.dat_w = mmio_bus.dat_w;
         mmio_sd_bus.sel   = mmio_bus.sel;
         mmio_sd_bus.we    = mmio_bus.we;
+        mmio_sd_bus.lock  = mmio_bus.lock;
         mmio_sd_bus.cyc   = mmio_bus.cyc && sel_sd;
         mmio_sd_bus.stb   = mmio_bus.stb && sel_sd;
 
@@ -270,6 +300,7 @@ module SOC (
         mmio_clint_bus.dat_w = mmio_bus.dat_w;
         mmio_clint_bus.sel   = mmio_bus.sel;
         mmio_clint_bus.we    = mmio_bus.we;
+        mmio_clint_bus.lock  = mmio_bus.lock;
         mmio_clint_bus.cyc   = mmio_bus.cyc && sel_clint;
         mmio_clint_bus.stb   = mmio_bus.stb && sel_clint;
 
@@ -401,7 +432,7 @@ module SOC (
             ddr_owner_is_data <= 1'b0;
         end
         else if (ddr_owner_valid) begin
-            if (ddr_bus.ack)
+            if (!ddr_data_bus.lock && (!ddr_data_bus.cyc || ddr_bus.ack))
                 ddr_owner_valid <= 1'b0;
         end
         else if (ddr_data_bus.cyc) begin
@@ -422,6 +453,7 @@ module SOC (
             ddr_bus.dat_w = ddr_data_bus.dat_w;
             ddr_bus.sel = ddr_data_bus.sel;
             ddr_bus.we = ddr_data_bus.we;
+            ddr_bus.lock = ddr_data_bus.lock;
             ddr_bus.cyc = ddr_data_bus.cyc;
             ddr_bus.stb = ddr_data_bus.stb;
             ddr_data_bus.dat_r = ddr_bus.dat_r;
@@ -436,6 +468,7 @@ module SOC (
             ddr_bus.dat_w = ddr_instr_bus.dat_w;
             ddr_bus.sel = ddr_instr_bus.sel;
             ddr_bus.we = ddr_instr_bus.we;
+            ddr_bus.lock = ddr_instr_bus.lock;
             ddr_bus.cyc = ddr_instr_bus.cyc;
             ddr_bus.stb = ddr_instr_bus.stb;
             ddr_instr_bus.dat_r = ddr_bus.dat_r;

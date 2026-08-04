@@ -23,14 +23,17 @@
             logic [DATA_W-1:0] dat_w;
             logic [DATA_W-1:0] dat_r;
             logic [SEL_W-1:0]  sel;
-            logic              we;
-            logic              cyc;
-            logic              stb;
-            logic              ack;
-            logic              stall;
+             logic              we;
+             logic              cyc;
+             logic              stb;
+             logic              lock;
+             logic              ack;
+             logic              stall;
 
-            modport master (output adr, dat_w, sel, we, cyc, stb, input dat_r, ack, stall);
-            modport slave  (input adr, dat_w, sel, we, cyc, stb, output dat_r, ack, stall);
+             modport master (output adr, dat_w, sel, we, cyc, stb, lock,
+                             input dat_r, ack, stall);
+             modport slave  (input adr, dat_w, sel, we, cyc, stb, lock,
+                            output dat_r, ack, stall);
         endinterface
 
 `endif

@@ -8,6 +8,9 @@ module cpu (
         input logic ext_irq,
         input logic sw_irq,
         input  logic timer_irq,
+        input  logic ext_write_valid,
+        input  logic [31:0] ext_write_addr,
+        input  logic [3:0] ext_write_sel,
         imem_if.master instr,
         wb_if.master data
     );
@@ -24,6 +27,7 @@ module cpu (
     logic [31:0] csr_mscratch; // 机器模式下的临时寄存器，异常处理程序可用来保存上下文
     logic [31:0] csr_mepc;    // 异常断点返回地址
     logic [31:0] csr_mcause;  // 异常原因 (最高位 1 代表中断，低位代表中断号)
+    logic [31:0] csr_mtval;   // 异常相关值
 
     always_comb begin
         csr_mip = 32'b0;
@@ -80,6 +84,8 @@ module cpu (
     logic [31:0] id_pc;
     logic [31:0] id_instr;
     logic [31:0] id_len;
+    logic        id_illegal;
+    logic [31:0] id_illegal_value;
 
     logic [31:0] instr_d;
     logic [6:0]  opcode_d;
@@ -93,6 +99,14 @@ module cpu (
     logic isLoad_d, isStore_d;
     logic isSYSTEM_d, isMRET_d, isEBREAK_d, isCSRRC_d, isCSRRW_d, isCSRRS_d, isECALL_d;
     logic isMUL_d, isDIV_d;
+    logic isFENCE_d;
+    logic isAtomic_d, isLR_d, isSC_d;
+    logic [3:0] amo_op_d;
+    logic aq_d, rl_d;
+    logic alu_reg_valid_d, alu_imm_valid_d, branch_valid_d, load_valid_d, store_valid_d;
+    logic alu_reg_funct_valid_d;
+    logic system_valid_d, amo_funct_valid_d, lr_encoding_d, sc_encoding_d;
+        logic decoded_valid_d, illegal_d;
 
     logic uses_rs1_d, uses_rs2_d;
 
@@ -107,39 +121,104 @@ module cpu (
     assign funct7_d = instr_d[31:25];
 
     always_comb begin
-        isALUreg_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d != 7'b0000001);
+        isALUreg_d = id_valid && (opcode_d == 7'b0110011) &&
+                     ((funct7_d == 7'b0000000) || (funct7_d == 7'b0100000));
         isALUimm_d = id_valid && (opcode_d == 7'b0010011);
         isBranch_d = id_valid && (opcode_d == 7'b1100011);
-        isJALR_d   = id_valid && (opcode_d == 7'b1100111);
+        isJALR_d   = id_valid && (opcode_d == 7'b1100111) && (funct3_d == 3'b000);
         isJAL_d    = id_valid && (opcode_d == 7'b1101111);
         isAUIPC_d  = id_valid && (opcode_d == 7'b0010111);
         isLUI_d    = id_valid && (opcode_d == 7'b0110111);
         isLoad_d   = id_valid && (opcode_d == 7'b0000011);
         isStore_d  = id_valid && (opcode_d == 7'b0100011);
         isSYSTEM_d = id_valid && (opcode_d == 7'b1110011);
+        isFENCE_d  = id_valid && (opcode_d == 7'b0001111) && (funct3_d == 3'b000);
 
         isMUL_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b0);
         isDIV_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b1);
 
+        isAtomic_d = id_valid && (opcode_d == 7'b0101111) && (funct3_d == 3'b010);
+        lr_encoding_d = isAtomic_d && (instr_d[31:27] == 5'b00010);
+        sc_encoding_d = isAtomic_d && (instr_d[31:27] == 5'b00011);
+        isLR_d = lr_encoding_d && (rs2_d == 5'd0);
+        isSC_d = sc_encoding_d;
+        aq_d = isAtomic_d && instr_d[26];
+        rl_d = isAtomic_d && instr_d[25];
+        unique case (instr_d[31:27])
+            5'b00000: amo_op_d = 4'd0; // AMOADD
+            5'b00001: amo_op_d = 4'd1; // AMOSWAP
+            5'b00100: amo_op_d = 4'd2; // AMOXOR
+            5'b01000: amo_op_d = 4'd3; // AMOOR
+            5'b01100: amo_op_d = 4'd4; // AMOAND
+            5'b10000: amo_op_d = 4'd5; // AMOMIN
+            5'b10100: amo_op_d = 4'd6; // AMOMAX
+            5'b11000: amo_op_d = 4'd7; // AMOMINU
+            5'b11100: amo_op_d = 4'd8; // AMOMAXU
+            default:  amo_op_d = 4'd0;
+        endcase
+        amo_funct_valid_d = (instr_d[31:27] == 5'b00000) ||
+                            (instr_d[31:27] == 5'b00001) ||
+                            (instr_d[31:27] == 5'b00010) ||
+                            (instr_d[31:27] == 5'b00011) ||
+                            (instr_d[31:27] == 5'b00100) ||
+                            (instr_d[31:27] == 5'b01000) ||
+                            (instr_d[31:27] == 5'b01100) ||
+                            (instr_d[31:27] == 5'b10000) ||
+                            (instr_d[31:27] == 5'b10100) ||
+                            (instr_d[31:27] == 5'b11000) ||
+                            (instr_d[31:27] == 5'b11100);
 
-        isCSRRW_d = isSYSTEM_d && (funct3_d == 3'b001);
-        isCSRRS_d = isSYSTEM_d && (funct3_d == 3'b010);
-        isCSRRC_d = isSYSTEM_d && (funct3_d == 3'b011);
+        isCSRRW_d = isSYSTEM_d && ((funct3_d == 3'b001) || (funct3_d == 3'b101));
+        isCSRRS_d = isSYSTEM_d && ((funct3_d == 3'b010) || (funct3_d == 3'b110));
+        isCSRRC_d = isSYSTEM_d && ((funct3_d == 3'b011) || (funct3_d == 3'b111));
         isMRET_d  = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h302);
         isEBREAK_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h001);
 
         isECALL_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h000);
 
+        alu_reg_valid_d = isALUreg_d || isMUL_d || isDIV_d;
+        alu_reg_funct_valid_d = (funct3_d == 3'b000) || (funct3_d == 3'b001) ||
+                                (funct3_d == 3'b010) || (funct3_d == 3'b011) ||
+                                (funct3_d == 3'b100) || (funct3_d == 3'b101) ||
+                                (funct3_d == 3'b110) || (funct3_d == 3'b111);
+        alu_imm_valid_d = isALUimm_d &&
+                          ((funct3_d == 3'b000) || (funct3_d == 3'b001) ||
+                           (funct3_d == 3'b010) || (funct3_d == 3'b011) ||
+                           (funct3_d == 3'b100) || (funct3_d == 3'b101) ||
+                           (funct3_d == 3'b110) || (funct3_d == 3'b111));
+        branch_valid_d = isBranch_d &&
+                         ((funct3_d == 3'b000) || (funct3_d == 3'b001) ||
+                          (funct3_d == 3'b100) || (funct3_d == 3'b101) ||
+                          (funct3_d == 3'b110) || (funct3_d == 3'b111));
+        load_valid_d = isLoad_d &&
+                       ((funct3_d == 3'b000) || (funct3_d == 3'b001) ||
+                        (funct3_d == 3'b010) || (funct3_d == 3'b100) ||
+                        (funct3_d == 3'b101));
+        store_valid_d = isStore_d &&
+                        ((funct3_d == 3'b000) || (funct3_d == 3'b001) ||
+                         (funct3_d == 3'b010));
+        system_valid_d = isMRET_d || isEBREAK_d || isECALL_d || isCSRRW_d || isCSRRS_d || isCSRRC_d;
+
         // CSR register instructions (CSRRW/CSRRS/CSRRC, funct3[2]=0) use rs1 as write value;
         // must be included in uses_rs1_d so load-use stalls fire correctly when a load
         // result feeds a CSR write (e.g. lw t0, 0(sp) followed by csrw mepc, t0).
         uses_rs1_d = isALUreg_d || isALUimm_d || isBranch_d || isJALR_d || isLoad_d || isStore_d || isMUL_d || isDIV_d
-                     || isCSRRW_d || isCSRRS_d || isCSRRC_d;
-        uses_rs2_d = isALUreg_d || isBranch_d || isStore_d || isMUL_d || isDIV_d;
+                     || isAtomic_d || (isCSRRW_d && !funct3_d[2]) || (isCSRRS_d && !funct3_d[2]) ||
+                     (isCSRRC_d && !funct3_d[2]);
+        uses_rs2_d = isALUreg_d || isBranch_d || isStore_d || isMUL_d || isDIV_d || (isAtomic_d && !isLR_d);
+
+        decoded_valid_d = (alu_reg_valid_d && alu_reg_funct_valid_d) || alu_imm_valid_d || branch_valid_d ||
+                          (isJALR_d || (id_valid && opcode_d == 7'b1101111)) ||
+                          (id_valid && ((opcode_d == 7'b0010111) || (opcode_d == 7'b0110111))) ||
+                          load_valid_d || store_valid_d || system_valid_d || isFENCE_d ||
+                          (lr_encoding_d && (rs2_d == 5'd0)) || sc_encoding_d ||
+                          (isAtomic_d && amo_funct_valid_d && !lr_encoding_d && !sc_encoding_d) ||
+                          sc_encoding_d;
+        illegal_d = id_valid && (id_illegal || !decoded_valid_d);
 
         Uimm_d = {instr_d[31], instr_d[30:12], 12'b0};
-        Iimm_d = {{21{instr_d[31]}}, instr_d[30:20]};
-        Simm_d = {{21{instr_d[31]}}, instr_d[30:25], instr_d[11:7]};
+        Iimm_d = {{20{instr_d[31]}}, instr_d[31:20]};
+        Simm_d = {{20{instr_d[31]}}, instr_d[31:25], instr_d[11:7]};
         Bimm_d = {{20{instr_d[31]}}, instr_d[7], instr_d[30:25], instr_d[11:8], 1'b0};
         Jimm_d = {{12{instr_d[31]}}, instr_d[19:12], instr_d[20], instr_d[30:21], 1'b0};
     end
@@ -150,11 +229,13 @@ module cpu (
         rs2_val_d = 32'b0;
 
         if (rs1_d != 5'd0) begin
-            rs1_val_d = (wb_we && (mem_wb_rd == rs1_d)) ? wb_value : reg_bank[rs1_d];
+            rs1_val_d = (atomic_wb_valid && (atomic_wb_rd == rs1_d)) ? atomic_wb_value :
+                        (wb_we && (mem_wb_rd == rs1_d)) ? wb_value : reg_bank[rs1_d];
         end
 
         if (rs2_d != 5'd0) begin
-            rs2_val_d = (wb_we && (mem_wb_rd == rs2_d)) ? wb_value : reg_bank[rs2_d];
+            rs2_val_d = (atomic_wb_valid && (atomic_wb_rd == rs2_d)) ? atomic_wb_value :
+                        (wb_we && (mem_wb_rd == rs2_d)) ? wb_value : reg_bank[rs2_d];
         end
     end
 
@@ -172,6 +253,11 @@ module cpu (
     logic        id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore;
     logic        id_ex_isCSRRS, id_ex_isCSRRC, id_ex_isCSRRW, id_ex_isMRET, id_ex_isEBREAK, id_ex_isECALL;
     logic        id_ex_isMUL, id_ex_isDIV;
+    logic        id_ex_isFENCE, id_ex_isAtomic, id_ex_isLR, id_ex_isSC;
+    logic [3:0]  id_ex_amo_op;
+    logic        id_ex_aq, id_ex_rl;
+    logic        id_ex_illegal;
+    logic [31:0] id_ex_illegal_value;
 
     // ---------------------- EX 阶段（带前递/旁路） ----------------------
     // MARK:EX
@@ -200,12 +286,18 @@ module cpu (
     logic [31:0] ex_wb_value;
 
     logic [31:0] ex_csr_rdata;
+    logic        ex_misaligned;
+    logic        ex_access_fault;
 
     // ---------------------- EX/MEM 流水寄存器 ----------------------
     logic        ex_mem_valid;
     logic [4:0]  ex_mem_rd;
     logic        ex_mem_isLoad, ex_mem_isStore;
+    logic        ex_mem_isAtomic, ex_mem_isLR, ex_mem_isSC;
     logic [2:0]  ex_mem_funct3;
+    logic [3:0]  ex_mem_amo_op;
+    logic        ex_mem_aq, ex_mem_rl;
+    logic [31:0] ex_mem_rs2_value;
     logic [31:0] ex_mem_addr;
     logic [31:0] ex_mem_store_wdata;
     logic [3:0]  ex_mem_store_wmask;
@@ -248,7 +340,64 @@ module cpu (
     logic stall_mem;
     logic mem_started;
     logic mem_req;
+    logic stall_atomic;
     logic stall_any;
+
+    typedef enum logic [2:0] {
+        ATOMIC_IDLE,
+        ATOMIC_LR_READ,
+        ATOMIC_LR_CAPTURE,
+        ATOMIC_SC_WRITE,
+        ATOMIC_AMO_READ,
+        ATOMIC_AMO_CAPTURE,
+        ATOMIC_AMO_WRITE,
+        ATOMIC_COMPLETE
+    } atomic_state_t;
+
+    atomic_state_t atomic_state;
+    logic          atomic_started;
+    logic [31:0]   atomic_addr;
+    logic [31:0]   atomic_store_data;
+    logic [31:0]   atomic_old_value;
+    logic [31:0]   atomic_new_value;
+    logic [31:0]   atomic_result;
+    logic [4:0]    atomic_rd;
+    logic [3:0]    atomic_op;
+    logic          atomic_is_lr;
+    logic          atomic_is_sc;
+    logic          reservation_valid;
+    logic [29:0]   reservation_word_addr;
+    logic          atomic_complete;
+    logic          atomic_wb_valid;
+    logic [4:0]    atomic_wb_rd;
+    logic [31:0]   atomic_wb_value;
+
+    assign atomic_complete = (atomic_state == ATOMIC_COMPLETE);
+
+    function automatic logic [31:0] amo_compute(
+        input logic [3:0] op,
+        input logic [31:0] old_value,
+        input logic [31:0] rhs
+    );
+        logic signed [31:0] old_signed;
+        logic signed [31:0] rhs_signed;
+        begin
+            old_signed = old_value;
+            rhs_signed = rhs;
+            unique case (op)
+                4'd0: amo_compute = old_value + rhs;
+                4'd1: amo_compute = rhs;
+                4'd2: amo_compute = old_value ^ rhs;
+                4'd3: amo_compute = old_value | rhs;
+                4'd4: amo_compute = old_value & rhs;
+                4'd5: amo_compute = (old_signed < rhs_signed) ? old_value : rhs;
+                4'd6: amo_compute = (old_signed > rhs_signed) ? old_value : rhs;
+                4'd7: amo_compute = (old_value < rhs) ? old_value : rhs;
+                4'd8: amo_compute = (old_value > rhs) ? old_value : rhs;
+                default: amo_compute = old_value;
+            endcase
+        end
+    endfunction
     always_comb begin
         stall_load_use = 1'b0;
         stall_div = 1'b0;
@@ -266,7 +415,8 @@ module cpu (
         end
 
         stall_mem = mem_req && (!mem_started || !data.ack);
-        stall_any = stall_load_use || stall_div || stall_mem;
+        stall_atomic = (atomic_state != ATOMIC_IDLE) || (ex_mem_valid && ex_mem_isAtomic);
+        stall_any = stall_load_use || stall_div || stall_mem || stall_atomic;
     end
 
     // ---------------------- 前端取指节流 ----------------------
@@ -291,14 +441,20 @@ module cpu (
         ex_rs1 = id_ex_rs1_val;
         ex_rs2 = id_ex_rs2_val;
 
-        if (ex_mem_fwd_en && (ex_mem_rd == id_ex_rs1)) begin
+        if (atomic_wb_valid && (atomic_wb_rd == id_ex_rs1)) begin
+            ex_rs1 = atomic_wb_value;
+        end
+        else if (ex_mem_fwd_en && (ex_mem_rd == id_ex_rs1)) begin
             ex_rs1 = ex_mem_wb_value;
         end
         else if (mem_wb_valid && mem_wb_wb_en && (mem_wb_rd != 5'd0) && (mem_wb_rd == id_ex_rs1)) begin
             ex_rs1 = wb_fwd_value;
         end
 
-        if (ex_mem_fwd_en && (ex_mem_rd == id_ex_rs2)) begin
+        if (atomic_wb_valid && (atomic_wb_rd == id_ex_rs2)) begin
+            ex_rs2 = atomic_wb_value;
+        end
+        else if (ex_mem_fwd_en && (ex_mem_rd == id_ex_rs2)) begin
             ex_rs2 = ex_mem_wb_value;
         end
         else if (mem_wb_valid && mem_wb_wb_en && (mem_wb_rd != 5'd0) && (mem_wb_rd == id_ex_rs2)) begin
@@ -322,6 +478,7 @@ module cpu (
             12'h340: ex_csr_rdata = csr_mscratch;
             12'h341: ex_csr_rdata = csr_mepc;
             12'h342: ex_csr_rdata = csr_mcause;
+            12'h343: ex_csr_rdata = csr_mtval;
             12'h344: ex_csr_rdata = csr_mip;
             default: ex_csr_rdata = 32'b0;
         endcase
@@ -344,7 +501,7 @@ module cpu (
 
     always_comb begin
         ex_csr_we = 1'b0;
-        if (id_ex_valid && !halted && !stall_mem) begin
+        if (id_ex_valid && !halted && !stall_mem && !stall_atomic) begin
             if (id_ex_isCSRRW) begin
                 ex_csr_we = 1'b1;
             end else if ((id_ex_isCSRRS || id_ex_isCSRRC) && (id_ex_rs1 != 5'd0)) begin
@@ -357,6 +514,7 @@ module cpu (
     // ---------------------- 异常与中断判断 ----------------------
     logic trap_req;
     logic [31:0] trap_cause;
+    logic [31:0] trap_value;
 
     // 全局中断使能
     wire mstatus_mie = csr_mstatus[3]; 
@@ -366,9 +524,28 @@ module cpu (
     always_comb begin
         trap_req = 1'b0;
         trap_cause = 32'b0;
+        trap_value = 32'b0;
+
+        if (id_ex_valid && id_ex_illegal && !stall_atomic) begin
+            trap_req = 1'b1;
+            trap_cause = 32'd2;
+            trap_value = id_ex_illegal_value;
+        end
+
+        if (!trap_req && id_ex_valid && ex_misaligned && !stall_atomic) begin
+            trap_req = 1'b1;
+            trap_cause = id_ex_isLR ? 32'd4 : 32'd6;
+            trap_value = ex_addr;
+        end
+
+        if (!trap_req && id_ex_valid && ex_access_fault && !stall_atomic) begin
+            trap_req = 1'b1;
+            trap_cause = (id_ex_isLR) ? 32'd5 : 32'd7;
+            trap_value = ex_addr;
+        end
 
         // 硬件中断
-        if (mstatus_mie && id_ex_valid && !halt_now && !stall_mem) begin
+        if (!trap_req && mstatus_mie && id_ex_valid && !halt_now && !stall_mem && !stall_atomic) begin
             if (active_irq[11]) begin // 外部中断 (MEIP)
                 trap_req = 1'b1;
                 trap_cause = 32'h8000_000B; // 最高位为1表示中断，异常码 11
@@ -382,7 +559,7 @@ module cpu (
         end
 
         // 软件trap
-        if (!trap_req && id_ex_valid && !stall_mem) begin
+        if (!trap_req && id_ex_valid && !stall_mem && !stall_atomic) begin
             if (id_ex_isECALL) begin
                 trap_req = 1'b1;
                 trap_cause = 32'd11; // Machine ECALL
@@ -399,6 +576,7 @@ module cpu (
             csr_mtvec    <= 32'b0;
             csr_mepc     <= 32'b0;
             csr_mcause   <= 32'b0;
+            csr_mtval    <= 32'b0;
             csr_mscratch <= 32'b0;
             csr_mie      <= 32'b0;
             // csr_mip      <= 32'b0;
@@ -407,6 +585,7 @@ module cpu (
                 // 保存现场
                 csr_mepc   <= id_ex_pc;    // 把当前出问题的指令 PC 保存下来
                 csr_mcause <= trap_cause;  // 记录是什么原因
+                csr_mtval  <= trap_value;
 
                 // mstatus 逻辑：MPIE 保存 MIE 的旧值，MIE 置零（关闭全局中断）
                 csr_mstatus[7] <= csr_mstatus[3]; 
@@ -426,10 +605,141 @@ module cpu (
                     12'h340: csr_mscratch <= ex_csr_wdata;
                     12'h341: csr_mepc     <= {ex_csr_wdata[31:1], 1'b0};  // RVC: preserve bit[1] for 2-byte alignment
                     12'h342: csr_mcause   <= ex_csr_wdata;
+                    12'h343: csr_mtval    <= ex_csr_wdata;
                     // ! IMPORTANT
                     // 注意：真实实现中，mstatus、mie 等有些位是只读（Hardwired to 0）的。
                     // 为了简化，目前允许全写。日后可加掩码，例如：csr_mstatus <= ex_csr_wdata & 32'h0000_1888;
                 endcase
+            end
+        end
+    end
+
+    // Atomic operations use one held context and two bus sub-transactions.
+    // The pipeline remains frozen until the complete operation can retire.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            atomic_state <= ATOMIC_IDLE;
+            atomic_started <= 1'b0;
+            atomic_addr <= 32'b0;
+            atomic_store_data <= 32'b0;
+            atomic_old_value <= 32'b0;
+            atomic_new_value <= 32'b0;
+            atomic_result <= 32'b0;
+            atomic_rd <= 5'b0;
+            atomic_op <= 4'b0;
+            atomic_is_lr <= 1'b0;
+            atomic_is_sc <= 1'b0;
+            reservation_valid <= 1'b0;
+            reservation_word_addr <= 30'b0;
+            atomic_wb_valid <= 1'b0;
+            atomic_wb_rd <= 5'b0;
+            atomic_wb_value <= 32'b0;
+        end
+        else begin
+            atomic_wb_valid <= (atomic_state == ATOMIC_COMPLETE) && (atomic_rd != 5'd0);
+            if (ext_write_valid && reservation_valid &&
+                (ext_write_addr[31:2] == reservation_word_addr) &&
+                (ext_write_sel != 4'b0000)) begin
+                reservation_valid <= 1'b0;
+            end
+
+            if ((atomic_state == ATOMIC_IDLE) && ex_mem_valid && ex_mem_isAtomic) begin
+                atomic_addr       <= ex_mem_addr;
+                atomic_store_data <= ex_mem_rs2_value;
+                atomic_rd         <= ex_mem_rd;
+                atomic_op         <= ex_mem_amo_op;
+                atomic_is_lr      <= ex_mem_isLR;
+                atomic_is_sc      <= ex_mem_isSC;
+                atomic_started   <= 1'b0;
+
+                if (ex_mem_isSC &&
+                    !(reservation_valid && (reservation_word_addr == ex_mem_addr[31:2]))) begin
+                    atomic_result <= 32'd1;
+                    atomic_state <= ATOMIC_COMPLETE;
+                    reservation_valid <= 1'b0;
+                end
+                else if (ex_mem_isLR) begin
+                    atomic_state <= ATOMIC_LR_READ;
+                end
+                else if (ex_mem_isSC) begin
+                    atomic_state <= ATOMIC_SC_WRITE;
+                end
+                else begin
+                    atomic_state <= ATOMIC_AMO_READ;
+                end
+            end
+            else begin
+                unique case (atomic_state)
+                    ATOMIC_LR_READ: begin
+                        if (!atomic_started) begin
+                            atomic_started <= 1'b1;
+                        end
+                        else if (data.ack) begin
+                            atomic_started <= 1'b0;
+                            atomic_state <= ATOMIC_LR_CAPTURE;
+                        end
+                    end
+                    ATOMIC_LR_CAPTURE: begin
+                        atomic_old_value <= data.dat_r;
+                        atomic_result <= data.dat_r;
+                        reservation_valid <= 1'b1;
+                        reservation_word_addr <= atomic_addr[31:2];
+                        atomic_state <= ATOMIC_COMPLETE;
+                    end
+                    ATOMIC_SC_WRITE: begin
+                        if (!atomic_started) begin
+                            atomic_started <= 1'b1;
+                        end
+                        else if (data.ack) begin
+                            atomic_result <= 32'd0;
+                            atomic_started <= 1'b0;
+                             reservation_valid <= 1'b0;
+                             atomic_state <= ATOMIC_COMPLETE;
+                         end
+                     end
+                    ATOMIC_AMO_READ: begin
+                        if (!atomic_started) begin
+                            atomic_started <= 1'b1;
+                        end
+                        else if (data.ack) begin
+                            atomic_started <= 1'b0;
+                            atomic_state <= ATOMIC_AMO_CAPTURE;
+                        end
+                    end
+                    ATOMIC_AMO_CAPTURE: begin
+                        atomic_old_value <= data.dat_r;
+                        atomic_new_value <= amo_compute(atomic_op, data.dat_r, atomic_store_data);
+                        atomic_result <= data.dat_r;
+                        reservation_valid <= 1'b0;
+                        atomic_state <= ATOMIC_AMO_WRITE;
+                    end
+                    ATOMIC_AMO_WRITE: begin
+                        if (!atomic_started) begin
+                            atomic_started <= 1'b1;
+                        end
+                        else if (data.ack) begin
+                            atomic_started <= 1'b0;
+                            reservation_valid <= 1'b0;
+                            atomic_state <= ATOMIC_COMPLETE;
+                        end
+                    end
+                    ATOMIC_COMPLETE: begin
+                        atomic_state <= ATOMIC_IDLE;
+                        atomic_wb_rd <= atomic_rd;
+                        atomic_wb_value <= atomic_result;
+                    end
+                    default: begin
+                        atomic_state <= ATOMIC_IDLE;
+                        atomic_started <= 1'b0;
+                    end
+                endcase
+            end
+
+            if (ex_mem_valid && ex_mem_isStore && data.ack) begin
+                reservation_valid <= 1'b0;
+            end
+            if (trap_req || (id_ex_valid && id_ex_isMRET) || halt_now) begin
+                reservation_valid <= 1'b0;
             end
         end
     end
@@ -473,7 +783,11 @@ module cpu (
         ex_pc_plus_jimm = id_ex_pc + id_ex_Jimm;
         ex_pc_plus_uimm = id_ex_pc + id_ex_Uimm;
 
-        ex_addr = ex_rs1 + (id_ex_isStore ? id_ex_Simm : id_ex_Iimm);
+        ex_addr = id_ex_isAtomic ? ex_rs1 : ex_rs1 + (id_ex_isStore ? id_ex_Simm : id_ex_Iimm);
+
+        ex_misaligned = id_ex_valid && id_ex_isAtomic && (ex_addr[1:0] != 2'b00);
+        ex_access_fault = id_ex_valid && id_ex_isAtomic &&
+                          !(is_dataram_region(ex_addr) || is_ddr_region(ex_addr));
 
         ex_store_wdata = 32'b0;
         ex_store_wmask = 4'b0000;
@@ -600,10 +914,10 @@ module cpu (
                               ex_wb_en    = 1'b1;
                               ex_wb_value = ex_csr_rdata;
                           end
-                          else if (id_ex_isLoad) begin
-                              ex_wb_en    = 1'b1;
-                              ex_wb_value = 32'b0;
-                          end
+                           else if (id_ex_isLoad) begin
+                               ex_wb_en    = 1'b1;
+                               ex_wb_value = 32'b0;
+                           end
                       end
 
                       ex_jalr_sum = ex_rs1 + id_ex_Iimm;
@@ -637,7 +951,7 @@ module cpu (
                           end
                       end
 
-                      if (stall_mem) begin
+                       if (stall_mem || stall_atomic) begin
                           ex_redirect = 1'b0;
                           ex_redirect_pc = 32'b0;
                           ex_wb_en = 1'b0;
@@ -667,7 +981,7 @@ module cpu (
 
     always_comb begin
         wb_value = mem_wb_isLoad ? wb_load_data : mem_wb_wb_value;
-        wb_we    = mem_wb_valid && mem_wb_wb_en && (mem_wb_rd != 5'd0);
+        wb_we    = mem_wb_valid && mem_wb_wb_en && (mem_wb_rd != 5'd0) && !atomic_complete;
     end
 
     // ---------------------- 总线驱动 ----------------------
@@ -675,12 +989,26 @@ module cpu (
         instr.addr = pc_f;
         instr.ren  = fetch_req;
 
-        data.adr   = ex_mem_addr;
-        data.dat_w = ex_mem_store_wdata;
-        data.sel   = (!halted && ex_mem_valid && ex_mem_isStore) ? ex_mem_store_wmask : 4'b1111;
-        data.we    = !halted && ex_mem_valid && ex_mem_isStore;
-        data.cyc   = !halted && mem_req;
-        data.stb   = data.cyc && mem_started;
+        data.adr   = (atomic_state != ATOMIC_IDLE) ? atomic_addr : ex_mem_addr;
+        data.dat_w = (atomic_state != ATOMIC_IDLE) ?
+                     ((atomic_state == ATOMIC_SC_WRITE || atomic_state == ATOMIC_AMO_WRITE) ?
+                      ((atomic_state == ATOMIC_SC_WRITE) ? atomic_store_data : atomic_new_value) : 32'b0) :
+                     ex_mem_store_wdata;
+        data.sel   = (atomic_state != ATOMIC_IDLE) ? 4'b1111 :
+                     ((!halted && ex_mem_valid && ex_mem_isStore) ? ex_mem_store_wmask : 4'b1111);
+        data.we    = (atomic_state == ATOMIC_SC_WRITE) || (atomic_state == ATOMIC_AMO_WRITE) ||
+                     (!halted && ex_mem_valid && ex_mem_isStore && !ex_mem_isAtomic);
+        data.cyc   = !halted && ((atomic_state != ATOMIC_IDLE &&
+                                  (atomic_state == ATOMIC_LR_READ || atomic_state == ATOMIC_SC_WRITE ||
+                                   atomic_state == ATOMIC_AMO_READ || atomic_state == ATOMIC_AMO_WRITE)) || mem_req);
+        data.stb   = data.cyc && ((atomic_state != ATOMIC_IDLE) ?
+                                  (atomic_started &&
+                                   !((atomic_state == ATOMIC_SC_WRITE || atomic_state == ATOMIC_AMO_WRITE) && data.ack)) :
+                                  mem_started);
+        data.lock  = (atomic_state != ATOMIC_IDLE) &&
+                     ((atomic_state == ATOMIC_LR_READ) || (atomic_state == ATOMIC_LR_CAPTURE) ||
+                      (atomic_state == ATOMIC_SC_WRITE) || (atomic_state == ATOMIC_AMO_READ) ||
+                      (atomic_state == ATOMIC_AMO_CAPTURE) || (atomic_state == ATOMIC_AMO_WRITE));
     end
 
     // ---------------------- 时序逻辑 ----------------------
@@ -689,7 +1017,7 @@ module cpu (
             halted <= 1'b0;
 
             {pc_f, if_valid, if_pc, f2_word, f2_valid} <= '0;
-            {id_valid, id_pc, id_instr} <= '0;
+            {id_valid, id_pc, id_instr, id_illegal, id_illegal_value} <= '0;
 
             {ibuf, ibuf_hw_count, pc_i, drop_halfword} <= '0;
 
@@ -700,18 +1028,19 @@ module cpu (
               id_ex_Uimm, id_ex_Iimm, id_ex_Simm, id_ex_Bimm, id_ex_Jimm,
               id_ex_isALUreg, id_ex_isALUimm, id_ex_isBranch, id_ex_isJALR, id_ex_isJAL,
               id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore, id_ex_isCSRRS, id_ex_isEBREAK,
-              id_ex_isMUL, id_ex_isDIV
-            } <= '0;
+               id_ex_isMUL, id_ex_isDIV, id_ex_isFENCE, id_ex_isAtomic, id_ex_isLR, id_ex_isSC,
+               id_ex_amo_op, id_ex_aq, id_ex_rl, id_ex_illegal, id_ex_illegal_value
+             } <= '0;
 
-            { ex_mem_valid, ex_mem_rd, ex_mem_isLoad, ex_mem_isStore, ex_mem_funct3,
-              ex_mem_addr, ex_mem_store_wdata, ex_mem_store_wmask, ex_mem_wb_en, ex_mem_wb_value
-            } <= '0;
+             { ex_mem_valid, ex_mem_rd, ex_mem_isLoad, ex_mem_isStore, ex_mem_isAtomic, ex_mem_isLR, ex_mem_isSC,
+               ex_mem_funct3, ex_mem_amo_op, ex_mem_aq, ex_mem_rl, ex_mem_rs2_value,
+               ex_mem_addr, ex_mem_store_wdata, ex_mem_store_wmask, ex_mem_wb_en, ex_mem_wb_value
+             } <= '0;
 
             { mem_wb_valid, mem_wb_rd, mem_wb_isLoad, mem_wb_funct3, mem_wb_addr_low,
               mem_wb_wb_en, mem_wb_wb_value
             } <= '0;
-            mem_started <= 1'b0;
-
+             mem_started <= 1'b0;
             {csr_cycle, csr_instret} <= '0;
 
             id_len    <= 32'd4;
@@ -720,13 +1049,12 @@ module cpu (
         else begin
             csr_cycle <= csr_cycle + 64'd1;
 
+
             if (!halted) begin
-                if (wb_we) begin
+                if (wb_we)
                     reg_bank[mem_wb_rd] <= wb_value;
-                end
-                if (mem_wb_valid) begin
+                if (mem_wb_valid)
                     csr_instret <= csr_instret + 64'd1;
-                end
             end
 
             if (halt_now) begin
@@ -798,6 +1126,8 @@ module cpu (
                         id_pc    <= pc_i_n;
                         id_instr <= inst32;
                         id_len   <= is_rvc ? 32'd2 : 32'd4;
+                        id_illegal <= is_rvc && exp.illegal;
+                        id_illegal_value <= is_rvc ? {16'b0, hw0} : inst32;
 
                         ibuf_n = ibuf_n >> (16 * inst_hw_len);
                         ibuf_cnt_n = ibuf_cnt_n - inst_hw_len;
@@ -808,6 +1138,8 @@ module cpu (
                         id_pc    <= pc_i_n;
                         id_instr <= 32'h0000_0013;
                         id_len   <= 32'd4;
+                        id_illegal <= 1'b0;
+                        id_illegal_value <= 32'b0;
                     end
                 end
 
@@ -856,7 +1188,7 @@ module cpu (
                 if (halt_now || ex_redirect || stall_load_use) begin
                     id_ex_valid <= 1'b0;
                 end
-                else if (!stall_div && !stall_mem) begin
+                else if (!stall_div && !stall_mem && !stall_atomic) begin
                     id_ex_valid  <= id_valid;
                     id_ex_pc     <= id_pc;
                     id_ex_instr  <= id_instr;
@@ -890,25 +1222,58 @@ module cpu (
                     id_ex_isECALL  <= isECALL_d;
                     id_ex_isMUL    <= isMUL_d;
                     id_ex_isDIV    <= isDIV_d;
+                    id_ex_isFENCE  <= isFENCE_d;
+                    id_ex_isAtomic <= isAtomic_d && !illegal_d;
+                    id_ex_isLR     <= isLR_d && !illegal_d;
+                    id_ex_isSC     <= isSC_d && !illegal_d;
+                    id_ex_amo_op   <= amo_op_d;
+                    id_ex_aq        <= aq_d;
+                    id_ex_rl        <= rl_d;
+                    id_ex_illegal   <= illegal_d;
+                    id_ex_illegal_value <= id_illegal_value;
                 end
             end
 
             // EX/MEM 更新
-            if (!halted && !stall_mem) begin
-                ex_mem_valid <= id_ex_valid;
+            if (!halted && !stall_mem && (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic && !atomic_complete) begin
+`ifdef BENCH
+`endif
+                ex_mem_valid <= id_ex_valid && !trap_req;
                 ex_mem_rd    <= id_ex_rd;
                 ex_mem_isLoad  <= id_ex_isLoad;
                 ex_mem_isStore <= id_ex_isStore;
+                 ex_mem_isAtomic <= id_ex_valid && id_ex_isAtomic && !trap_req;
+                 ex_mem_isLR <= id_ex_valid && id_ex_isLR && !trap_req;
+                 ex_mem_isSC <= id_ex_valid && id_ex_isSC && !trap_req;
                 ex_mem_funct3  <= id_ex_funct3;
+                ex_mem_amo_op <= id_ex_amo_op;
+                ex_mem_aq <= id_ex_aq;
+                ex_mem_rl <= id_ex_rl;
+                ex_mem_rs2_value <= ex_rs2;
                 ex_mem_addr    <= ex_addr;
                 ex_mem_store_wdata <= ex_store_wdata;
                 ex_mem_store_wmask <= ex_store_wmask;
                 ex_mem_wb_en    <= ex_wb_en;
                 ex_mem_wb_value <= ex_wb_value;
             end
-
+            else if (atomic_complete) begin
+                ex_mem_valid <= 1'b0;
+                ex_mem_isAtomic <= 1'b0;
+                ex_mem_isLR <= 1'b0;
+                ex_mem_isSC <= 1'b0;
+            end
             // MEM/WB 更新
-            if (!halted && !stall_mem) begin
+            if (atomic_complete) begin
+                mem_wb_valid <= 1'b0;
+                ex_mem_valid <= 1'b0;
+                ex_mem_isAtomic <= 1'b0;
+                ex_mem_isLR <= 1'b0;
+                ex_mem_isSC <= 1'b0;
+                if (atomic_rd != 5'd0)
+                    reg_bank[atomic_rd] <= atomic_result;
+                csr_instret <= csr_instret + 64'd1;
+            end
+            else if (!halted && !stall_mem && (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic) begin
                 mem_wb_valid <= ex_mem_valid;
                 mem_wb_rd    <= ex_mem_rd;
                 mem_wb_isLoad <= ex_mem_isLoad;
@@ -917,6 +1282,10 @@ module cpu (
                 mem_wb_wb_en <= ex_mem_wb_en;
                 mem_wb_wb_value <= ex_mem_wb_value;
             end
+            else if (!halted && !stall_mem) begin
+                mem_wb_valid <= 1'b0;
+            end
+
 
             if (halted || halt_now || ex_redirect || !mem_req || (mem_started && data.ack)) begin
                 mem_started <= 1'b0;
@@ -928,7 +1297,7 @@ module cpu (
     end
 
     // ---------------------- 除法器控制信号 ----------------------
-    assign div_start = !halted && !stall_mem && id_ex_isDIV && id_ex_valid && !div_result_valid && !div_busy;
+    assign div_start = !halted && !stall_mem && !stall_atomic && id_ex_isDIV && id_ex_valid && !div_result_valid && !div_busy;
     assign div_flush = !halted && (ex_redirect || halt_now);
 
     // ---------------------- 除法器实例化 ----------------------

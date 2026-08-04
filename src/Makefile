@@ -30,6 +30,7 @@ _TEST_SRC_IRQ   := test_csr.c
 _TEST_SRC_MTIME := test_csr.c
 _TEST_SRC_MSIP  := test_msip.c
 _TEST_SRC_SHIFT := test_shift.c
+_TEST_SRC_A     := test_a.c
 
 _TEST_SOURCES := $(foreach n,$(_TEST_ENABLED),$(if $(_TEST_SRC_$(n)),program/app/$(_TEST_SRC_$(n))))
 
@@ -106,9 +107,9 @@ else
     BIN2HEX_EXECUTABLE = $(BUILD_DIR)/$(BIN2HEX_UTIL_NAME)
 endif
 
-# CPU supports RV32I + M + C (RVC is decompressed in the frontend).
-ARCH_FLAGS = -march=rv32imc_zicsr -mabi=ilp32
-DDR_ARCH_FLAGS = -march=rv32imc_zicsr -mabi=ilp32
+# CPU supports RV32I + M + A + C (RVC is decompressed in the frontend).
+ARCH_FLAGS = -march=rv32imac_zicsr -mabi=ilp32
+DDR_ARCH_FLAGS = -march=rv32imac_zicsr -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)

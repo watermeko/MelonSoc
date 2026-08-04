@@ -2,9 +2,9 @@
 
 # Overview
 
-A RISC-V based SoC written in SystemVerilog, running on the Tang Premier 20K. Supports the RV32IMC instruction set with a five-stage pipeline. Interrupts are supported.
+A RISC-V based SoC written in SystemVerilog, running on the Tang Premier 20K. Supports the RV32IMAC instruction set with a five-stage pipeline. Interrupts are supported.
 
-Peripherals include I2C, GPIO, UART, TIMER, and SPI. Uses DDR memory. FreeRTOS has been ported.
+Peripherals include I2C, GPIO, UART, TIMER, and SPI. Uses DDR memory. FreeRTOS has been ported. Implemented uart based bootloader.
 
 
 # Running
