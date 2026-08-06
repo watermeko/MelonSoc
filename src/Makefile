@@ -77,7 +77,7 @@ _C_SOURCES = program/utils/print.c \
 
 _C_SOURCES += $(sort $(_TEST_SOURCES))
 
-_S_UPPER_SOURCES =
+_S_UPPER_SOURCES = program/app/test_priv.S program/app/test_sv32.S
 LINKER_SCRIPT = program/boot/linker_pipeline.ld      
 DDR_LINKER_SCRIPT = program/boot/linker_ddr.ld
 
@@ -108,8 +108,8 @@ else
 endif
 
 # CPU supports RV32I + M + A + C (RVC is decompressed in the frontend).
-ARCH_FLAGS = -march=rv32imac_zicsr -mabi=ilp32
-DDR_ARCH_FLAGS = -march=rv32imac_zicsr -mabi=ilp32
+ARCH_FLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32
+DDR_ARCH_FLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32
 PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)

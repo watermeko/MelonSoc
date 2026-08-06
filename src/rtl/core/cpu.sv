@@ -16,26 +16,9 @@ module cpu (
     );
     import soc_pkg::*;
     import rvc::*;
-    // ---------------------- CSR 寄存器 ----------------------
-    logic [63:0] csr_cycle;
-    logic [63:0] csr_instret;
 
-    logic [31:0] csr_mstatus; // 机器状态 (bit 3: MIE 全局中断使能, bit 7: MPIE 历史中断使能)
-    logic [31:0] csr_mie;     // 中断使能寄存器 (bit 11: MEIE, bit 7: MTIE, bit 3: MSIE)
-    logic [31:0] csr_mip;     // 中断等待寄存器
-    logic [31:0] csr_mtvec;   // 异常入口地址
-    logic [31:0] csr_mscratch; // 机器模式下的临时寄存器，异常处理程序可用来保存上下文
-    logic [31:0] csr_mepc;    // 异常断点返回地址
-    logic [31:0] csr_mcause;  // 异常原因 (最高位 1 代表中断，低位代表中断号)
-    logic [31:0] csr_mtval;   // 异常相关值
-
-    always_comb begin
-        csr_mip = 32'b0;
-        csr_mip[11] = ext_irq;
-        csr_mip[7]  = timer_irq;
-        csr_mip[3]  = sw_irq;
-    end
-
+    imem_if core_instr();
+    wb_if core_data();
     // ---------------------- 通用寄存器堆 ----------------------
     logic [31:0] reg_bank [0:31];
 
@@ -66,12 +49,16 @@ module cpu (
     logic [31:0] pc_f;
     logic        if_valid; 
     logic [31:0] if_pc;    
-    logic [31:0] f2_word;  
-    logic        f2_valid; 
+    logic [31:0] f2_word;
+    logic        f2_valid;
+    logic        if_fetch_fault, if_fetch_page_fault;
+    logic        f2_fetch_fault, f2_fetch_page_fault;
 
     // 半字缓存，用来缓存RVC指令
     localparam int unsigned IBUF_HW_MAX = 8;
     logic [16*IBUF_HW_MAX-1:0] ibuf;
+    logic [IBUF_HW_MAX-1:0] ibuf_fetch_fault;
+    logic [IBUF_HW_MAX-1:0] ibuf_fetch_page_fault;
     logic [$clog2(IBUF_HW_MAX+1)-1:0] ibuf_hw_count;
     logic [31:0] pc_i;          // 将要发射到 ID 的“架构 PC”（字节地址；RVC 时 +2，否则 +4）
     logic        drop_halfword; // redirect 后若目标落在 word 内部的 2-byte 边界，丢弃一个 halfword 以对齐 IBUF
@@ -86,6 +73,9 @@ module cpu (
     logic [31:0] id_len;
     logic        id_illegal;
     logic [31:0] id_illegal_value;
+    logic        id_fetch_fault;
+    logic        id_fetch_page_fault;
+    logic [31:0] id_fetch_fault_value;
 
     logic [31:0] instr_d;
     logic [6:0]  opcode_d;
@@ -97,9 +87,10 @@ module cpu (
 
     logic isALUreg_d, isALUimm_d, isBranch_d, isJALR_d, isJAL_d, isAUIPC_d, isLUI_d;
     logic isLoad_d, isStore_d;
-    logic isSYSTEM_d, isMRET_d, isEBREAK_d, isCSRRC_d, isCSRRW_d, isCSRRS_d, isECALL_d;
+    logic isSYSTEM_d, isMRET_d, isSRET_d, isWFI_d, isSFENCE_d, isEBREAK_d;
+    logic isCSRRC_d, isCSRRW_d, isCSRRS_d, isECALL_d;
     logic isMUL_d, isDIV_d;
-    logic isFENCE_d;
+    logic isFENCE_d, isFENCEI_d;
     logic isAtomic_d, isLR_d, isSC_d;
     logic [3:0] amo_op_d;
     logic aq_d, rl_d;
@@ -133,6 +124,8 @@ module cpu (
         isStore_d  = id_valid && (opcode_d == 7'b0100011);
         isSYSTEM_d = id_valid && (opcode_d == 7'b1110011);
         isFENCE_d  = id_valid && (opcode_d == 7'b0001111) && (funct3_d == 3'b000);
+        isFENCEI_d = id_valid && (opcode_d == 7'b0001111) && (funct3_d == 3'b001) &&
+                     (rs1_d == 5'd0) && (rd_d == 5'd0) && (instr_d[31:20] == 12'b0);
 
         isMUL_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b0);
         isDIV_d = id_valid && (opcode_d == 7'b0110011) && (funct7_d == 7'b0000001) && (funct3_d[2] == 1'b1);
@@ -171,10 +164,13 @@ module cpu (
         isCSRRW_d = isSYSTEM_d && ((funct3_d == 3'b001) || (funct3_d == 3'b101));
         isCSRRS_d = isSYSTEM_d && ((funct3_d == 3'b010) || (funct3_d == 3'b110));
         isCSRRC_d = isSYSTEM_d && ((funct3_d == 3'b011) || (funct3_d == 3'b111));
-        isMRET_d  = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h302);
-        isEBREAK_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h001);
-
-        isECALL_d = isSYSTEM_d && (funct3_d == 3'b000) && (instr_d[31:20] == 12'h000);
+        isMRET_d   = isSYSTEM_d && (instr_d == 32'h3020_0073);
+        isSRET_d   = isSYSTEM_d && (instr_d == 32'h1020_0073);
+        isWFI_d    = isSYSTEM_d && (instr_d == 32'h1050_0073);
+        isSFENCE_d = isSYSTEM_d && (funct3_d == 3'b000) &&
+                     (funct7_d == 7'b0001001) && (rd_d == 5'd0);
+        isEBREAK_d = isSYSTEM_d && (instr_d == 32'h0010_0073);
+        isECALL_d  = isSYSTEM_d && (instr_d == 32'h0000_0073);
 
         alu_reg_valid_d = isALUreg_d || isMUL_d || isDIV_d;
         alu_reg_funct_valid_d = (funct3_d == 3'b000) || (funct3_d == 3'b001) ||
@@ -197,7 +193,8 @@ module cpu (
         store_valid_d = isStore_d &&
                         ((funct3_d == 3'b000) || (funct3_d == 3'b001) ||
                          (funct3_d == 3'b010));
-        system_valid_d = isMRET_d || isEBREAK_d || isECALL_d || isCSRRW_d || isCSRRS_d || isCSRRC_d;
+        system_valid_d = isMRET_d || isSRET_d || isWFI_d || isSFENCE_d ||
+                         isEBREAK_d || isECALL_d || isCSRRW_d || isCSRRS_d || isCSRRC_d;
 
         // CSR register instructions (CSRRW/CSRRS/CSRRC, funct3[2]=0) use rs1 as write value;
         // must be included in uses_rs1_d so load-use stalls fire correctly when a load
@@ -210,7 +207,7 @@ module cpu (
         decoded_valid_d = (alu_reg_valid_d && alu_reg_funct_valid_d) || alu_imm_valid_d || branch_valid_d ||
                           (isJALR_d || (id_valid && opcode_d == 7'b1101111)) ||
                           (id_valid && ((opcode_d == 7'b0010111) || (opcode_d == 7'b0110111))) ||
-                          load_valid_d || store_valid_d || system_valid_d || isFENCE_d ||
+                          load_valid_d || store_valid_d || system_valid_d || isFENCE_d || isFENCEI_d ||
                           (lr_encoding_d && (rs2_d == 5'd0)) || sc_encoding_d ||
                           (isAtomic_d && amo_funct_valid_d && !lr_encoding_d && !sc_encoding_d) ||
                           sc_encoding_d;
@@ -251,13 +248,17 @@ module cpu (
     logic [31:0] id_ex_Uimm, id_ex_Iimm, id_ex_Simm, id_ex_Bimm, id_ex_Jimm;
     logic        id_ex_isALUreg, id_ex_isALUimm, id_ex_isBranch, id_ex_isJALR, id_ex_isJAL;
     logic        id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore;
-    logic        id_ex_isCSRRS, id_ex_isCSRRC, id_ex_isCSRRW, id_ex_isMRET, id_ex_isEBREAK, id_ex_isECALL;
+    logic        id_ex_isCSRRS, id_ex_isCSRRC, id_ex_isCSRRW;
+    logic        id_ex_isMRET, id_ex_isSRET, id_ex_isWFI, id_ex_isSFENCE, id_ex_isEBREAK, id_ex_isECALL;
     logic        id_ex_isMUL, id_ex_isDIV;
     logic        id_ex_isFENCE, id_ex_isAtomic, id_ex_isLR, id_ex_isSC;
     logic [3:0]  id_ex_amo_op;
     logic        id_ex_aq, id_ex_rl;
     logic        id_ex_illegal;
     logic [31:0] id_ex_illegal_value;
+    logic        id_ex_fetch_fault;
+    logic        id_ex_fetch_page_fault;
+    logic [31:0] id_ex_fetch_fault_value;
 
     // ---------------------- EX 阶段（带前递/旁路） ----------------------
     // MARK:EX
@@ -288,6 +289,34 @@ module cpu (
     logic [31:0] ex_csr_rdata;
     logic        ex_misaligned;
     logic        ex_access_fault;
+    logic        d_xlate_req;
+    logic        d_xlate_ready;
+    logic [31:0] d_phys_addr;
+    logic        d_page_fault;
+    logic        d_access_fault;
+    logic        mmu_instr_fault;
+    logic        mmu_instr_page_fault;
+    logic [31:0] mmu_instr_fault_vaddr;
+
+    always_comb begin
+        ex_addr = id_ex_isAtomic ? ex_rs1 :
+                  ex_rs1 + (id_ex_isStore ? id_ex_Simm : id_ex_Iimm);
+        ex_misaligned = id_ex_valid &&
+                        (((id_ex_isAtomic ||
+                           ((id_ex_isLoad || id_ex_isStore) && (id_ex_funct3[1:0] == 2'b10))) &&
+                          (ex_addr[1:0] != 2'b00)) ||
+                         (((id_ex_isLoad || id_ex_isStore) && (id_ex_funct3[1:0] == 2'b01)) &&
+                          ex_addr[0]));
+        ex_access_fault = id_ex_valid && d_xlate_ready &&
+                          (d_access_fault ||
+                           (id_ex_isAtomic && !supports_atomic(d_phys_addr)) ||
+                           ((id_ex_isLoad || id_ex_isStore) &&
+                            !is_mapped_data_address(d_phys_addr)));
+    end
+
+    assign d_xlate_req = id_ex_valid &&
+                         (id_ex_isLoad || id_ex_isStore || id_ex_isAtomic) &&
+                         !ex_misaligned;
 
     // ---------------------- EX/MEM 流水寄存器 ----------------------
     logic        ex_mem_valid;
@@ -318,6 +347,7 @@ module cpu (
     logic [31:0] wb_load_data;
     logic [31:0] wb_value;
     logic        wb_we;
+    logic        wb_retire;
 
     function automatic logic [31:0] arithmetic_shift_right(
         input logic [31:0] value,
@@ -341,6 +371,7 @@ module cpu (
     logic mem_started;
     logic mem_req;
     logic stall_atomic;
+    logic stall_mmu;
     logic stall_any;
 
     typedef enum logic [2:0] {
@@ -414,13 +445,14 @@ module cpu (
             stall_div = 1'b1;
         end
 
-        stall_mem = mem_req && (!mem_started || !data.ack);
+        stall_mem = mem_req && (!mem_started || !core_data.ack);
         stall_atomic = (atomic_state != ATOMIC_IDLE) || (ex_mem_valid && ex_mem_isAtomic);
-        stall_any = stall_load_use || stall_div || stall_mem || stall_atomic;
+        stall_mmu = d_xlate_req && !d_xlate_ready;
+        stall_any = stall_load_use || stall_div || stall_mem || stall_atomic || stall_mmu;
     end
 
     // ---------------------- 前端取指节流 ----------------------
-    assign halt_now = (!halted && id_ex_valid && id_ex_isEBREAK);
+    assign halt_now = 1'b0;
     always_comb begin
         int pending_hw;
         pending_hw = (f2_valid ? 2 : 0) + (if_valid ? 2 : 0);
@@ -462,29 +494,28 @@ module cpu (
         end
     end
 
-    // ---------------------- CSR 读----------------------
+    // ---------------------- CSR/特权控制 ----------------------
     logic [11:0] ex_csr_addr;
-    always_comb begin
-        ex_csr_addr = id_ex_instr[31:20];
+    logic csr_valid;
+    logic csr_illegal;
+    logic xret_illegal;
+    logic ex_fire;
+    logic priv_trap_taken;
+    logic priv_return_taken;
+    logic priv_redirect_valid;
+    logic [31:0] priv_redirect_pc;
+    logic [1:0] current_priv;
+    logic [31:0] current_mstatus;
+    logic [31:0] current_satp;
+    logic [31:0] irq_pending;
+    logic retire_pulse;
 
-        case (ex_csr_addr)
-            12'hc00: ex_csr_rdata = csr_cycle[31:0];
-            12'hc80: ex_csr_rdata = csr_cycle[63:32];
-            12'hc02: ex_csr_rdata = csr_instret[31:0];
-            12'hc82: ex_csr_rdata = csr_instret[63:32];
-            12'h300: ex_csr_rdata = csr_mstatus;
-            12'h304: ex_csr_rdata = csr_mie;
-            12'h305: ex_csr_rdata = csr_mtvec;
-            12'h340: ex_csr_rdata = csr_mscratch;
-            12'h341: ex_csr_rdata = csr_mepc;
-            12'h342: ex_csr_rdata = csr_mcause;
-            12'h343: ex_csr_rdata = csr_mtval;
-            12'h344: ex_csr_rdata = csr_mip;
-            default: ex_csr_rdata = 32'b0;
-        endcase
-    end
-    
-    // ------------------------ CSR 写 ----------------------
+    assign ex_csr_addr = id_ex_instr[31:20];
+    assign csr_valid = id_ex_isCSRRS || id_ex_isCSRRC || id_ex_isCSRRW;
+    assign ex_fire = id_ex_valid && !halted && !stall_mem && !stall_atomic &&
+                     !stall_div && !stall_mmu;
+    assign irq_pending = {20'b0, ext_irq, 3'b0, timer_irq, 3'b0, sw_irq, 3'b0};
+
     logic [31:0] ex_csr_wdata;
     logic [31:0] ex_csr_op_a;
     logic        ex_csr_we;
@@ -501,7 +532,7 @@ module cpu (
 
     always_comb begin
         ex_csr_we = 1'b0;
-        if (id_ex_valid && !halted && !stall_mem && !stall_atomic) begin
+        if (ex_fire) begin
             if (id_ex_isCSRRW) begin
                 ex_csr_we = 1'b1;
             end else if ((id_ex_isCSRRS || id_ex_isCSRRC) && (id_ex_rs1 != 5'd0)) begin
@@ -511,108 +542,98 @@ module cpu (
         end
     end
 
-    // ---------------------- 异常与中断判断 ----------------------
-    logic trap_req;
-    logic [31:0] trap_cause;
-    logic [31:0] trap_value;
-
-    // 全局中断使能
-    wire mstatus_mie = csr_mstatus[3]; 
-    // 有效的中断请求 = 等待中(mip) & 软件允许(mie)
-    wire [31:0] active_irq = csr_mip & csr_mie;
+    // ---------------------- 同步异常判断 ----------------------
+    logic exception_req;
+    logic [31:0] exception_cause;
+    logic [31:0] exception_value;
 
     always_comb begin
-        trap_req = 1'b0;
-        trap_cause = 32'b0;
-        trap_value = 32'b0;
+        exception_req = 1'b0;
+        exception_cause = 32'b0;
+        exception_value = 32'b0;
 
-        if (id_ex_valid && id_ex_illegal && !stall_atomic) begin
-            trap_req = 1'b1;
-            trap_cause = 32'd2;
-            trap_value = id_ex_illegal_value;
+        if (id_ex_valid && id_ex_fetch_fault && (current_priv != 2'b11) &&
+            !stall_atomic) begin
+            exception_req = 1'b1;
+            exception_cause = id_ex_fetch_page_fault ? 32'd12 : 32'd1;
+            exception_value = id_ex_fetch_fault_value;
         end
 
-        if (!trap_req && id_ex_valid && ex_misaligned && !stall_atomic) begin
-            trap_req = 1'b1;
-            trap_cause = id_ex_isLR ? 32'd4 : 32'd6;
-            trap_value = ex_addr;
+        if (!exception_req && id_ex_valid && id_ex_illegal && !stall_atomic) begin
+            exception_req = 1'b1;
+            exception_cause = 32'd2;
+            exception_value = id_ex_illegal_value;
         end
 
-        if (!trap_req && id_ex_valid && ex_access_fault && !stall_atomic) begin
-            trap_req = 1'b1;
-            trap_cause = (id_ex_isLR) ? 32'd5 : 32'd7;
-            trap_value = ex_addr;
+        if (!exception_req && id_ex_valid && (csr_illegal || xret_illegal)) begin
+            exception_req = 1'b1;
+            exception_cause = 32'd2;
+            exception_value = id_ex_instr;
         end
 
-        // 硬件中断
-        if (!trap_req && mstatus_mie && id_ex_valid && !halt_now && !stall_mem && !stall_atomic) begin
-            if (active_irq[11]) begin // 外部中断 (MEIP)
-                trap_req = 1'b1;
-                trap_cause = 32'h8000_000B; // 最高位为1表示中断，异常码 11
-            end else if (active_irq[3]) begin // 软件中断 (MSIP)
-                trap_req = 1'b1;
-                trap_cause = 32'h8000_0003; 
-            end else if (active_irq[7]) begin // 定时器中断 (MTIP)
-                trap_req = 1'b1;
-                trap_cause = 32'h8000_0007;
-            end
+        if (!exception_req && id_ex_valid && ex_misaligned && !stall_atomic) begin
+            exception_req = 1'b1;
+            exception_cause = (id_ex_isLoad || id_ex_isLR) ? 32'd4 : 32'd6;
+            exception_value = ex_addr;
         end
 
-        // 软件trap
-        if (!trap_req && id_ex_valid && !stall_mem && !stall_atomic) begin
+        if (!exception_req && id_ex_valid && d_xlate_ready && d_page_fault) begin
+            exception_req = 1'b1;
+            exception_cause = (id_ex_isLoad || id_ex_isLR) ? 32'd13 : 32'd15;
+            exception_value = ex_addr;
+        end
+
+        if (!exception_req && id_ex_valid && ex_access_fault && !stall_atomic) begin
+            exception_req = 1'b1;
+            exception_cause = (id_ex_isLoad || id_ex_isLR) ? 32'd5 : 32'd7;
+            exception_value = ex_addr;
+        end
+
+        if (!exception_req && id_ex_valid && !stall_mem && !stall_atomic) begin
             if (id_ex_isECALL) begin
-                trap_req = 1'b1;
-                trap_cause = 32'd11; // Machine ECALL
-            end else if (id_ex_isEBREAK) begin
-                trap_req = 1'b1;
-                trap_cause = 32'd3;  // Breakpoint
-            end
-        end
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            csr_mstatus  <= 32'b0;
-            csr_mtvec    <= 32'b0;
-            csr_mepc     <= 32'b0;
-            csr_mcause   <= 32'b0;
-            csr_mtval    <= 32'b0;
-            csr_mscratch <= 32'b0;
-            csr_mie      <= 32'b0;
-            // csr_mip      <= 32'b0;
-        end else begin
-            if (trap_req) begin
-                // 保存现场
-                csr_mepc   <= id_ex_pc;    // 把当前出问题的指令 PC 保存下来
-                csr_mcause <= trap_cause;  // 记录是什么原因
-                csr_mtval  <= trap_value;
-
-                // mstatus 逻辑：MPIE 保存 MIE 的旧值，MIE 置零（关闭全局中断）
-                csr_mstatus[7] <= csr_mstatus[3]; 
-                csr_mstatus[3] <= 1'b0;
-            end 
-            else if (id_ex_valid && id_ex_isMRET && !stall_mem) begin
-                // 恢复现场
-                // MIE 恢复为 MPIE 的旧值，MPIE 置一
-                csr_mstatus[3] <= csr_mstatus[7];
-                csr_mstatus[7] <= 1'b1;
-            end 
-            else if (ex_csr_we) begin
-                case (ex_csr_addr)
-                    12'h300: csr_mstatus  <= ex_csr_wdata;
-                    12'h304: csr_mie      <= ex_csr_wdata;
-                    12'h305: csr_mtvec    <= {ex_csr_wdata[31:2], 2'b00};
-                    12'h340: csr_mscratch <= ex_csr_wdata;
-                    12'h341: csr_mepc     <= {ex_csr_wdata[31:1], 1'b0};  // RVC: preserve bit[1] for 2-byte alignment
-                    12'h342: csr_mcause   <= ex_csr_wdata;
-                    12'h343: csr_mtval    <= ex_csr_wdata;
-                    // ! IMPORTANT
-                    // 注意：真实实现中，mstatus、mie 等有些位是只读（Hardwired to 0）的。
-                    // 为了简化，目前允许全写。日后可加掩码，例如：csr_mstatus <= ex_csr_wdata & 32'h0000_1888;
+                exception_req = 1'b1;
+                unique case (current_priv)
+                    2'b00: exception_cause = 32'd8;
+                    2'b01: exception_cause = 32'd9;
+                    default: exception_cause = 32'd11;
                 endcase
+            end else if (id_ex_isEBREAK) begin
+                exception_req = 1'b1;
+                exception_cause = 32'd3;
             end
         end
     end
+
+    priv_csr u_priv_csr (
+        .clk(clk),
+        .rst_n(rst_n),
+        .irq_pending_i(irq_pending),
+        .ex_valid_i(id_ex_valid),
+        .ex_fire_i(ex_fire),
+        .ex_pc_i(id_ex_pc),
+        .csr_valid_i(csr_valid),
+        .csr_addr_i(ex_csr_addr),
+        .csr_write_i(ex_csr_we),
+        .csr_wdata_i(ex_csr_wdata),
+        .csr_rdata_o(ex_csr_rdata),
+        .csr_illegal_o(csr_illegal),
+        .exception_valid_i(exception_req),
+        .exception_cause_i(exception_cause),
+        .exception_tval_i(exception_value),
+        .mret_i(id_ex_isMRET),
+        .sret_i(id_ex_isSRET),
+        .sfence_vma_i(id_ex_isSFENCE),
+        .wfi_i(id_ex_isWFI),
+        .xret_illegal_o(xret_illegal),
+        .retire_i(retire_pulse),
+        .trap_taken_o(priv_trap_taken),
+        .return_taken_o(priv_return_taken),
+        .redirect_valid_o(priv_redirect_valid),
+        .redirect_pc_o(priv_redirect_pc),
+        .privilege_o(current_priv),
+        .mstatus_o(current_mstatus),
+        .satp_o(current_satp)
+    );
 
     // Atomic operations use one held context and two bus sub-transactions.
     // The pipeline remains frozen until the complete operation can retire.
@@ -674,14 +695,14 @@ module cpu (
                         if (!atomic_started) begin
                             atomic_started <= 1'b1;
                         end
-                        else if (data.ack) begin
+                        else if (core_data.ack) begin
                             atomic_started <= 1'b0;
                             atomic_state <= ATOMIC_LR_CAPTURE;
                         end
                     end
                     ATOMIC_LR_CAPTURE: begin
-                        atomic_old_value <= data.dat_r;
-                        atomic_result <= data.dat_r;
+                        atomic_old_value <= core_data.dat_r;
+                        atomic_result <= core_data.dat_r;
                         reservation_valid <= 1'b1;
                         reservation_word_addr <= atomic_addr[31:2];
                         atomic_state <= ATOMIC_COMPLETE;
@@ -690,7 +711,7 @@ module cpu (
                         if (!atomic_started) begin
                             atomic_started <= 1'b1;
                         end
-                        else if (data.ack) begin
+                        else if (core_data.ack) begin
                             atomic_result <= 32'd0;
                             atomic_started <= 1'b0;
                              reservation_valid <= 1'b0;
@@ -701,15 +722,15 @@ module cpu (
                         if (!atomic_started) begin
                             atomic_started <= 1'b1;
                         end
-                        else if (data.ack) begin
+                        else if (core_data.ack) begin
                             atomic_started <= 1'b0;
                             atomic_state <= ATOMIC_AMO_CAPTURE;
                         end
                     end
                     ATOMIC_AMO_CAPTURE: begin
-                        atomic_old_value <= data.dat_r;
-                        atomic_new_value <= amo_compute(atomic_op, data.dat_r, atomic_store_data);
-                        atomic_result <= data.dat_r;
+                        atomic_old_value <= core_data.dat_r;
+                        atomic_new_value <= amo_compute(atomic_op, core_data.dat_r, atomic_store_data);
+                        atomic_result <= core_data.dat_r;
                         reservation_valid <= 1'b0;
                         atomic_state <= ATOMIC_AMO_WRITE;
                     end
@@ -717,7 +738,7 @@ module cpu (
                         if (!atomic_started) begin
                             atomic_started <= 1'b1;
                         end
-                        else if (data.ack) begin
+                        else if (core_data.ack) begin
                             atomic_started <= 1'b0;
                             reservation_valid <= 1'b0;
                             atomic_state <= ATOMIC_COMPLETE;
@@ -735,10 +756,10 @@ module cpu (
                 endcase
             end
 
-            if (ex_mem_valid && ex_mem_isStore && data.ack) begin
+            if (ex_mem_valid && ex_mem_isStore && core_data.ack) begin
                 reservation_valid <= 1'b0;
             end
-            if (trap_req || (id_ex_valid && id_ex_isMRET) || halt_now) begin
+            if (priv_trap_taken || priv_return_taken || halt_now) begin
                 reservation_valid <= 1'b0;
             end
         end
@@ -782,12 +803,6 @@ module cpu (
         ex_pc_plus_bimm = id_ex_pc + id_ex_Bimm;
         ex_pc_plus_jimm = id_ex_pc + id_ex_Jimm;
         ex_pc_plus_uimm = id_ex_pc + id_ex_Uimm;
-
-        ex_addr = id_ex_isAtomic ? ex_rs1 : ex_rs1 + (id_ex_isStore ? id_ex_Simm : id_ex_Iimm);
-
-        ex_misaligned = id_ex_valid && id_ex_isAtomic && (ex_addr[1:0] != 2'b00);
-        ex_access_fault = id_ex_valid && id_ex_isAtomic &&
-                          !(is_dataram_region(ex_addr) || is_ddr_region(ex_addr));
 
         ex_store_wdata = 32'b0;
         ex_store_wmask = 4'b0000;
@@ -926,20 +941,18 @@ module cpu (
                       ex_redirect_pc = 32'b0;
 
                       // Trap
-                      if (trap_req) begin
+                      if (priv_redirect_valid) begin
                           ex_redirect = 1'b1;
-                          ex_redirect_pc = {csr_mtvec[31:2], 2'b00}; 
+                          ex_redirect_pc = priv_redirect_pc;
 
                           ex_wb_en = 1'b0;
                           ex_store_wmask = 4'b0000;
-                      end 
-                      // mret
-                      else if (id_ex_valid && id_ex_isMRET) begin
-                          ex_redirect = 1'b1;
-                          ex_redirect_pc = csr_mepc;
                       end
                       else if (id_ex_valid) begin
-                          if (id_ex_isBranch && ex_take_branch) begin
+                          if (id_ex_isSFENCE && !xret_illegal) begin
+                              ex_redirect = 1'b1;
+                              ex_redirect_pc = ex_pc_plus_len;
+                          end else if (id_ex_isBranch && ex_take_branch) begin
                               ex_redirect = 1'b1;
                               ex_redirect_pc = ex_pc_plus_bimm;
                           end else if (id_ex_isJALR) begin
@@ -951,7 +964,7 @@ module cpu (
                           end
                       end
 
-                       if (stall_mem || stall_atomic) begin
+                       if (stall_mem || stall_atomic || stall_mmu) begin
                           ex_redirect = 1'b0;
                           ex_redirect_pc = 32'b0;
                           ex_wb_en = 1'b0;
@@ -969,57 +982,89 @@ module cpu (
         mem_byteAccess     = (mem_wb_funct3[1:0] == 2'b00);
         mem_halfwordAccess = (mem_wb_funct3[1:0] == 2'b01);
 
-        load_half = mem_wb_addr_low[1] ? data.dat_r[31:16] : data.dat_r[15:0];
+        load_half = mem_wb_addr_low[1] ? core_data.dat_r[31:16] : core_data.dat_r[15:0];
         load_byte = mem_wb_addr_low[0] ? load_half[15:8] : load_half[7:0];
         load_sign = ~mem_wb_funct3[2] & (mem_byteAccess ? load_byte[7] : load_half[15]);
 
         wb_load_data =
             mem_byteAccess     ? {{24{load_sign}}, load_byte} :
             mem_halfwordAccess ? {{16{load_sign}}, load_half} :
-            data.dat_r;
+            core_data.dat_r;
     end
 
     always_comb begin
         wb_value = mem_wb_isLoad ? wb_load_data : mem_wb_wb_value;
         wb_we    = mem_wb_valid && mem_wb_wb_en && (mem_wb_rd != 5'd0) && !atomic_complete;
+        wb_retire = mem_wb_valid && !stall_mem && !halted;
     end
+
+    assign retire_pulse = wb_retire || atomic_complete;
 
     // ---------------------- 总线驱动 ----------------------
     always_comb begin
-        instr.addr = pc_f;
-        instr.ren  = fetch_req;
+        core_instr.addr = pc_f;
+        core_instr.ren  = fetch_req;
 
-        data.adr   = (atomic_state != ATOMIC_IDLE) ? atomic_addr : ex_mem_addr;
-        data.dat_w = (atomic_state != ATOMIC_IDLE) ?
+        core_data.adr   = (atomic_state != ATOMIC_IDLE) ? atomic_addr : ex_mem_addr;
+        core_data.dat_w = (atomic_state != ATOMIC_IDLE) ?
                      ((atomic_state == ATOMIC_SC_WRITE || atomic_state == ATOMIC_AMO_WRITE) ?
                       ((atomic_state == ATOMIC_SC_WRITE) ? atomic_store_data : atomic_new_value) : 32'b0) :
                      ex_mem_store_wdata;
-        data.sel   = (atomic_state != ATOMIC_IDLE) ? 4'b1111 :
+        core_data.sel   = (atomic_state != ATOMIC_IDLE) ? 4'b1111 :
                      ((!halted && ex_mem_valid && ex_mem_isStore) ? ex_mem_store_wmask : 4'b1111);
-        data.we    = (atomic_state == ATOMIC_SC_WRITE) || (atomic_state == ATOMIC_AMO_WRITE) ||
+        core_data.we    = (atomic_state == ATOMIC_SC_WRITE) || (atomic_state == ATOMIC_AMO_WRITE) ||
                      (!halted && ex_mem_valid && ex_mem_isStore && !ex_mem_isAtomic);
-        data.cyc   = !halted && ((atomic_state != ATOMIC_IDLE &&
+        core_data.cyc   = !halted && ((atomic_state != ATOMIC_IDLE &&
                                   (atomic_state == ATOMIC_LR_READ || atomic_state == ATOMIC_SC_WRITE ||
                                    atomic_state == ATOMIC_AMO_READ || atomic_state == ATOMIC_AMO_WRITE)) || mem_req);
-        data.stb   = data.cyc && ((atomic_state != ATOMIC_IDLE) ?
+        core_data.stb   = core_data.cyc && ((atomic_state != ATOMIC_IDLE) ?
                                   (atomic_started &&
-                                   !((atomic_state == ATOMIC_SC_WRITE || atomic_state == ATOMIC_AMO_WRITE) && data.ack)) :
+                                    !((atomic_state == ATOMIC_SC_WRITE || atomic_state == ATOMIC_AMO_WRITE) && core_data.ack)) :
                                   mem_started);
-        data.lock  = (atomic_state != ATOMIC_IDLE) &&
+        core_data.lock  = (atomic_state != ATOMIC_IDLE) &&
                      ((atomic_state == ATOMIC_LR_READ) || (atomic_state == ATOMIC_LR_CAPTURE) ||
                       (atomic_state == ATOMIC_SC_WRITE) || (atomic_state == ATOMIC_AMO_READ) ||
                       (atomic_state == ATOMIC_AMO_CAPTURE) || (atomic_state == ATOMIC_AMO_WRITE));
     end
+
+    sv32_mmu u_mmu (
+        .clk(clk),
+        .rst_n(rst_n),
+        .satp_i(current_satp),
+        .mstatus_i(current_mstatus),
+        .privilege_i(current_priv),
+        .sfence_vma_i(ex_fire && id_ex_isSFENCE && !xret_illegal),
+        .frontend_flush_i(ex_redirect),
+        .core_instr(core_instr),
+        .phys_instr(instr),
+        .d_req_valid_i(d_xlate_req),
+        .d_vaddr_i(ex_addr),
+        .d_store_i(id_ex_isStore || id_ex_isSC ||
+                   (id_ex_isAtomic && !id_ex_isLR)),
+        .d_req_ready_o(d_xlate_ready),
+        .d_paddr_o(d_phys_addr),
+        .d_page_fault_o(d_page_fault),
+        .d_access_fault_o(d_access_fault),
+        .instr_fault_o(mmu_instr_fault),
+        .instr_page_fault_o(mmu_instr_page_fault),
+        .instr_fault_vaddr_o(mmu_instr_fault_vaddr),
+        .core_data(core_data),
+        .phys_data(data)
+    );
 
     // ---------------------- 时序逻辑 ----------------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             halted <= 1'b0;
 
-            {pc_f, if_valid, if_pc, f2_word, f2_valid} <= '0;
-            {id_valid, id_pc, id_instr, id_illegal, id_illegal_value} <= '0;
+            {pc_f, if_valid, if_pc, f2_word, f2_valid,
+             if_fetch_fault, if_fetch_page_fault,
+             f2_fetch_fault, f2_fetch_page_fault} <= '0;
+            {id_valid, id_pc, id_instr, id_illegal, id_illegal_value,
+             id_fetch_fault, id_fetch_page_fault, id_fetch_fault_value} <= '0;
 
-            {ibuf, ibuf_hw_count, pc_i, drop_halfword} <= '0;
+            {ibuf, ibuf_fetch_fault, ibuf_fetch_page_fault,
+             ibuf_hw_count, pc_i, drop_halfword} <= '0;
 
             { id_ex_valid, id_ex_pc, id_ex_instr,
               id_ex_rs1, id_ex_rs2, id_ex_rd,
@@ -1027,9 +1072,13 @@ module cpu (
               id_ex_rs1_val, id_ex_rs2_val,
               id_ex_Uimm, id_ex_Iimm, id_ex_Simm, id_ex_Bimm, id_ex_Jimm,
               id_ex_isALUreg, id_ex_isALUimm, id_ex_isBranch, id_ex_isJALR, id_ex_isJAL,
-              id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore, id_ex_isCSRRS, id_ex_isEBREAK,
+              id_ex_isAUIPC, id_ex_isLUI, id_ex_isLoad, id_ex_isStore,
+              id_ex_isCSRRS, id_ex_isCSRRC, id_ex_isCSRRW,
+              id_ex_isMRET, id_ex_isSRET, id_ex_isWFI, id_ex_isSFENCE,
+              id_ex_isEBREAK, id_ex_isECALL,
                id_ex_isMUL, id_ex_isDIV, id_ex_isFENCE, id_ex_isAtomic, id_ex_isLR, id_ex_isSC,
-               id_ex_amo_op, id_ex_aq, id_ex_rl, id_ex_illegal, id_ex_illegal_value
+               id_ex_amo_op, id_ex_aq, id_ex_rl, id_ex_illegal, id_ex_illegal_value,
+               id_ex_fetch_fault, id_ex_fetch_page_fault, id_ex_fetch_fault_value
              } <= '0;
 
              { ex_mem_valid, ex_mem_rd, ex_mem_isLoad, ex_mem_isStore, ex_mem_isAtomic, ex_mem_isLR, ex_mem_isSC,
@@ -1041,20 +1090,13 @@ module cpu (
               mem_wb_wb_en, mem_wb_wb_value
             } <= '0;
              mem_started <= 1'b0;
-            {csr_cycle, csr_instret} <= '0;
-
             id_len    <= 32'd4;
             id_ex_len <= 32'd4;
         end
         else begin
-            csr_cycle <= csr_cycle + 64'd1;
-
-
             if (!halted) begin
                 if (wb_we)
                     reg_bank[mem_wb_rd] <= wb_value;
-                if (mem_wb_valid)
-                    csr_instret <= csr_instret + 64'd1;
             end
 
             if (halt_now) begin
@@ -1063,6 +1105,8 @@ module cpu (
 
             if (!halted) begin
                 logic [16*IBUF_HW_MAX-1:0] ibuf_n;
+                logic [IBUF_HW_MAX-1:0] ibuf_fault_n;
+                logic [IBUF_HW_MAX-1:0] ibuf_page_fault_n;
                 logic [$clog2(IBUF_HW_MAX+1)-1:0] ibuf_cnt_n;
                 logic [31:0] pc_i_n;
                 logic drop_n;
@@ -1074,12 +1118,16 @@ module cpu (
                 rvc_exp_t exp;
 
                 ibuf_n     = ibuf;
+                ibuf_fault_n = ibuf_fetch_fault;
+                ibuf_page_fault_n = ibuf_fetch_page_fault;
                 ibuf_cnt_n = ibuf_hw_count;
                 pc_i_n     = pc_i;
                 drop_n     = drop_halfword;
 
                 if (halt_now || ex_redirect) begin
                     ibuf_n     = '0;
+                    ibuf_fault_n = '0;
+                    ibuf_page_fault_n = '0;
                     ibuf_cnt_n = '0;
                     pc_i_n     = ex_redirect ? ex_redirect_pc : pc_i;
                     drop_n     = ex_redirect ? ex_redirect_pc[1] : 1'b0;
@@ -1088,12 +1136,16 @@ module cpu (
                     if (f2_valid) begin
                         ibuf_n[16*ibuf_cnt_n +: 16] = f2_word[15:0];
                         ibuf_n[16*(ibuf_cnt_n + 1) +: 16] = f2_word[31:16];
+                        ibuf_fault_n[int'(ibuf_cnt_n) +: 2] = {2{f2_fetch_fault}};
+                        ibuf_page_fault_n[int'(ibuf_cnt_n) +: 2] = {2{f2_fetch_page_fault}};
                         ibuf_cnt_n = ibuf_cnt_n + 2;
                     end
 
                     // redirect 后若目标落在 word 内部（2-byte 对齐但非 4-byte），丢弃一个 halfword 以对齐到正确的指令边界。
                     if (drop_n && (ibuf_cnt_n != 0)) begin
                         ibuf_n = ibuf_n >> 16;
+                        ibuf_fault_n = ibuf_fault_n >> 1;
+                        ibuf_page_fault_n = ibuf_page_fault_n >> 1;
                         ibuf_cnt_n = ibuf_cnt_n - 1;
                         drop_n = 1'b0;
                     end
@@ -1104,6 +1156,9 @@ module cpu (
                     id_pc    <= 32'b0;
                     id_instr <= 32'h0000_0013; // NOP
                     id_len   <= 32'd4;
+                    id_fetch_fault <= 1'b0;
+                    id_fetch_page_fault <= 1'b0;
+                    id_fetch_fault_value <= 32'b0;
                 end
                 else if (!stall_any) begin
                     have_hw0 = (ibuf_cnt_n != 0);
@@ -1128,8 +1183,18 @@ module cpu (
                         id_len   <= is_rvc ? 32'd2 : 32'd4;
                         id_illegal <= is_rvc && exp.illegal;
                         id_illegal_value <= is_rvc ? {16'b0, hw0} : inst32;
+                        id_fetch_fault <= ibuf_fault_n[0] ||
+                                          (!is_rvc && ibuf_fault_n[1]);
+                        id_fetch_page_fault <= ibuf_fault_n[0] ?
+                                               ibuf_page_fault_n[0] :
+                                               ibuf_page_fault_n[1];
+                        id_fetch_fault_value <= ibuf_fault_n[0] ? pc_i_n :
+                                                ((!is_rvc && ibuf_fault_n[1]) ?
+                                                 (pc_i_n + 32'd2) : 32'b0);
 
                         ibuf_n = ibuf_n >> (16 * inst_hw_len);
+                        ibuf_fault_n = ibuf_fault_n >> inst_hw_len;
+                        ibuf_page_fault_n = ibuf_page_fault_n >> inst_hw_len;
                         ibuf_cnt_n = ibuf_cnt_n - inst_hw_len;
                         pc_i_n = pc_i_n + (is_rvc ? 32'd2 : 32'd4);
                     end
@@ -1140,10 +1205,15 @@ module cpu (
                         id_len   <= 32'd4;
                         id_illegal <= 1'b0;
                         id_illegal_value <= 32'b0;
+                        id_fetch_fault <= 1'b0;
+                        id_fetch_page_fault <= 1'b0;
+                        id_fetch_fault_value <= 32'b0;
                     end
                 end
 
                 ibuf         <= ibuf_n;
+                ibuf_fetch_fault <= ibuf_fault_n;
+                ibuf_fetch_page_fault <= ibuf_page_fault_n;
                 ibuf_hw_count <= ibuf_cnt_n;
                 pc_i          <= pc_i_n;
                 drop_halfword <= drop_n;
@@ -1151,11 +1221,15 @@ module cpu (
                 if (halt_now || ex_redirect) begin
                     f2_valid <= 1'b0;
                     f2_word  <= 32'b0;
+                    f2_fetch_fault <= 1'b0;
+                    f2_fetch_page_fault <= 1'b0;
                 end
                 else begin
                     f2_valid <= if_valid;
                     if (if_valid) begin
-                        f2_word <= instr.rdata;
+                        f2_word <= core_instr.rdata;
+                        f2_fetch_fault <= if_fetch_fault;
+                        f2_fetch_page_fault <= if_fetch_page_fault;
                     end
                 end
             end
@@ -1165,15 +1239,21 @@ module cpu (
                     pc_f     <= {ex_redirect_pc[31:2], 2'b00};
                     if_pc    <= 32'b0;
                     if_valid <= 1'b0;
+                    if_fetch_fault <= 1'b0;
+                    if_fetch_page_fault <= 1'b0;
                 end
-                else if (fetch_req && !instr.stall) begin
+                else if (fetch_req && !core_instr.stall) begin
                     if_pc    <= pc_f;
                     if_valid <= 1'b1;
+                    if_fetch_fault <= mmu_instr_fault;
+                    if_fetch_page_fault <= mmu_instr_page_fault;
                     pc_f     <= pc_f + 32'd4;
                 end
                 else begin
                     if_pc    <= if_pc;
                     if_valid <= 1'b0;
+                    if_fetch_fault <= 1'b0;
+                    if_fetch_page_fault <= 1'b0;
                     pc_f     <= pc_f;
                 end
             end
@@ -1188,7 +1268,7 @@ module cpu (
                 if (halt_now || ex_redirect || stall_load_use) begin
                     id_ex_valid <= 1'b0;
                 end
-                else if (!stall_div && !stall_mem && !stall_atomic) begin
+                else if (!stall_div && !stall_mem && !stall_atomic && !stall_mmu) begin
                     id_ex_valid  <= id_valid;
                     id_ex_pc     <= id_pc;
                     id_ex_instr  <= id_instr;
@@ -1218,6 +1298,9 @@ module cpu (
                     id_ex_isCSRRC  <= isCSRRC_d;
                     id_ex_isCSRRW  <= isCSRRW_d;
                     id_ex_isMRET   <= isMRET_d;
+                    id_ex_isSRET   <= isSRET_d;
+                    id_ex_isWFI    <= isWFI_d;
+                    id_ex_isSFENCE <= isSFENCE_d;
                     id_ex_isEBREAK <= isEBREAK_d;
                     id_ex_isECALL  <= isECALL_d;
                     id_ex_isMUL    <= isMUL_d;
@@ -1231,26 +1314,30 @@ module cpu (
                     id_ex_rl        <= rl_d;
                     id_ex_illegal   <= illegal_d;
                     id_ex_illegal_value <= id_illegal_value;
+                    id_ex_fetch_fault <= id_fetch_fault;
+                    id_ex_fetch_page_fault <= id_fetch_page_fault;
+                    id_ex_fetch_fault_value <= id_fetch_fault_value;
                 end
             end
 
             // EX/MEM 更新
-            if (!halted && !stall_mem && (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic && !atomic_complete) begin
+            if (!halted && !stall_mem && !stall_mmu &&
+                (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic && !atomic_complete) begin
 `ifdef BENCH
 `endif
-                ex_mem_valid <= id_ex_valid && !trap_req;
+                ex_mem_valid <= id_ex_valid && !priv_trap_taken;
                 ex_mem_rd    <= id_ex_rd;
                 ex_mem_isLoad  <= id_ex_isLoad;
                 ex_mem_isStore <= id_ex_isStore;
-                 ex_mem_isAtomic <= id_ex_valid && id_ex_isAtomic && !trap_req;
-                 ex_mem_isLR <= id_ex_valid && id_ex_isLR && !trap_req;
-                 ex_mem_isSC <= id_ex_valid && id_ex_isSC && !trap_req;
+                 ex_mem_isAtomic <= id_ex_valid && id_ex_isAtomic && !priv_trap_taken;
+                 ex_mem_isLR <= id_ex_valid && id_ex_isLR && !priv_trap_taken;
+                 ex_mem_isSC <= id_ex_valid && id_ex_isSC && !priv_trap_taken;
                 ex_mem_funct3  <= id_ex_funct3;
                 ex_mem_amo_op <= id_ex_amo_op;
                 ex_mem_aq <= id_ex_aq;
                 ex_mem_rl <= id_ex_rl;
                 ex_mem_rs2_value <= ex_rs2;
-                ex_mem_addr    <= ex_addr;
+                ex_mem_addr    <= d_xlate_req ? d_phys_addr : ex_addr;
                 ex_mem_store_wdata <= ex_store_wdata;
                 ex_mem_store_wmask <= ex_store_wmask;
                 ex_mem_wb_en    <= ex_wb_en;
@@ -1271,7 +1358,6 @@ module cpu (
                 ex_mem_isSC <= 1'b0;
                 if (atomic_rd != 5'd0)
                     reg_bank[atomic_rd] <= atomic_result;
-                csr_instret <= csr_instret + 64'd1;
             end
             else if (!halted && !stall_mem && (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic) begin
                 mem_wb_valid <= ex_mem_valid;
@@ -1287,7 +1373,7 @@ module cpu (
             end
 
 
-            if (halted || halt_now || ex_redirect || !mem_req || (mem_started && data.ack)) begin
+            if (halted || halt_now || ex_redirect || !mem_req || (mem_started && core_data.ack)) begin
                 mem_started <= 1'b0;
             end
             else if (mem_req && !mem_started) begin

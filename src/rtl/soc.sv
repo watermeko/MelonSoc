@@ -1,5 +1,7 @@
 `include "lib/soc_pkg.sv"
 `include "lib/bus_if.sv"
+`include "core/priv_csr.sv"
+`include "core/sv32_mmu.sv"
 `include "core/cpu.sv"
 `include "core/mem.sv"
 `include "include/peripherals.sv"
@@ -139,11 +141,11 @@ module SOC (
     logic [31:0] cpu_data_rdata_mux;
     logic [31:0] cpu_data_rdata_q;
     always_comb begin
-        data_is_mmio = is_mmio_region(cpu_data_bus.adr);
+        data_is_mmio = is_mapped_mmio(cpu_data_bus.adr);
         data_is_ddr = is_ddr_region(cpu_data_bus.adr);
-        data_is_ram = !data_is_mmio && !data_is_ddr;
-        data_unmapped = cpu_data_bus.cyc && cpu_data_bus.stb && !data_is_mmio && !data_is_ddr &&
-                        !is_dataram_region(cpu_data_bus.adr);
+        data_is_ram = is_dataram_region(cpu_data_bus.adr);
+        data_unmapped = cpu_data_bus.cyc && cpu_data_bus.stb &&
+                        !is_mapped_data_address(cpu_data_bus.adr);
 
         ram_bus.adr   = cpu_data_bus.adr;
         ram_bus.dat_w = cpu_data_bus.dat_w;

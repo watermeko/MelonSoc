@@ -49,8 +49,8 @@
             localparam logic [31:0] DDR_BASE_ADDR      = 32'h8000_0000;
             localparam logic [31:0] DDR_SIZE_BYTES     = 32'h0800_0000; // 1Gbit = 128MiB
             localparam logic [31:0] DDR_END_ADDR       = DDR_BASE_ADDR + DDR_SIZE_BYTES;
-            localparam int unsigned PROGROM_WORDS     = 8192; // 32KB / 4
-            localparam int unsigned DATARAM_WORDS     = 8192; // 32KB / 4
+            localparam int unsigned PROGROM_WORDS     = 7168; // 28KB / 4
+            localparam int unsigned DATARAM_WORDS     = 4096; // 16KB / 4
             localparam logic [31:0] DATARAM_BASE_ADDR  = 32'h0001_0000;
             localparam logic [31:0] DATARAM_SIZE_BYTES = DATARAM_WORDS * 4;
             localparam logic [31:0] DATARAM_END_ADDR   = DATARAM_BASE_ADDR + DATARAM_SIZE_BYTES;
@@ -75,6 +75,28 @@
 
             function automatic logic is_dataram_region(input logic [31:0] addr);
                 return (addr >= DATARAM_BASE_ADDR) && (addr < DATARAM_END_ADDR);
+            endfunction
+
+            function automatic logic is_mapped_mmio(input logic [31:0] addr);
+                logic [31:0] word_addr;
+                word_addr = align_word(addr);
+                return (word_addr == IO_LEDS_ADDR) ||
+                       (word_addr == IO_UART_DAT_ADDR) ||
+                       (word_addr == IO_UART_CTRL_ADDR) ||
+                       ((word_addr >= IO_I2C_TXRX_ADDR) && (word_addr <= IO_I2C_DIV_ADDR)) ||
+                       ((word_addr >= IO_TIMER_CTRL_ADDR) && (word_addr <= IO_TIMER_STATUS_ADDR)) ||
+                       ((word_addr >= IO_SPI_TXRX_ADDR) && (word_addr <= IO_SPI_DIV_ADDR)) ||
+                       ((word_addr >= IO_SD_CMD_ADDR) && (word_addr <= IO_SD_DEBUG_ADDR)) ||
+                       ((word_addr >= IO_SD_DATA_ADDR) && (word_addr < (IO_SD_DATA_ADDR + 32'd512))) ||
+                       (word_addr == IO_CLINT_MSIP_ADDR) ||
+                       (word_addr == IO_CLINT_MTIMECMP_ADDR) ||
+                       (word_addr == (IO_CLINT_MTIMECMP_ADDR + 4)) ||
+                       (word_addr == IO_CLINT_MTIME_ADDR) ||
+                       (word_addr == (IO_CLINT_MTIME_ADDR + 4));
+            endfunction
+
+            function automatic logic is_mapped_data_address(input logic [31:0] addr);
+                return is_dataram_region(addr) || is_ddr_region(addr) || is_mapped_mmio(addr);
             endfunction
 
             function automatic logic supports_atomic(input logic [31:0] addr);

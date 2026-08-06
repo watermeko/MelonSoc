@@ -12,6 +12,8 @@
 #include "fatboot.h"
 #include "boot_image.h"
 #include "xmodem.h"
+#include "test_priv.h"
+#include "test_sv32.h"
 
 #if defined(CONFIG_APP_TEST_CSR) || defined(CONFIG_APP_TEST_IRQ) || defined(CONFIG_APP_TEST_MTIME)
 #include "test_csr.h"
@@ -148,6 +150,8 @@ static void shell_help(void) {
     puts("  sdload             - load BOOT.BIN from SD and jump to DDR app");
     puts("  uartload           - receive BOOT.BIN via XMODEM-CRC and jump to DDR app");
     puts("  lcd                - draw colorbar on the DDR-backed LCD framebuffer");
+    puts("  test-priv          - test Bare M/S/U privilege transitions");
+    puts("  test-sv32          - test Sv32 data translation and page walk");
 #ifdef CONFIG_APP_TEST_M
     puts("  test-m             - test M extension (multiply/divide)");
 #endif
@@ -435,6 +439,49 @@ static void shell_test_csr(const char *arg) {
 }
 #endif
 
+static void shell_test_priv(const char *arg) {
+    if (arg && *arg) { puts("Usage: test-priv"); return; }
+
+    puts("--- M/S/U Privilege Test Start ---");
+    int result = test_privilege_modes();
+    if (result == 0)
+        puts("--- PRIVILEGE TEST PASSED! ---");
+    else
+        printf("--- PRIVILEGE TEST FAILED! code=%d ---\n", result);
+}
+
+static void shell_test_sv32(const char *arg) {
+    if (arg && *arg) { puts("Usage: test-sv32"); return; }
+
+    puts("--- Sv32 Data Translation Test Start ---");
+    int result = test_sv32_data();
+    if (result != 0) {
+        printf("--- SV32 DATA TEST FAILED! code=%d ---\n", result);
+        return;
+    }
+    puts("[OK] Sv32 data mapping");
+
+    result = sv32_fault_test();
+    if (result != 0) {
+        printf("--- SV32 FAULT TEST FAILED! code=%d ---\n", result);
+        return;
+    }
+    puts("[OK] Sv32 load page fault");
+
+    puts("[INFO] Entering Sv32 supervisor instruction test");
+    result = sv32_instruction_test();
+    if (result != 0) {
+        printf("--- SV32 INSTRUCTION TEST FAILED! code=%d ---\n", result);
+        return;
+    }
+
+    result = sv32_instruction_fault_test();
+    if (result == 0)
+        puts("--- SV32 DATA TEST PASSED! ---");
+    else
+        printf("--- SV32 INSTRUCTION FAULT TEST FAILED! code=%d ---\n", result);
+}
+
 #ifdef CONFIG_APP_TEST_IRQ
 static void shell_test_irq(const char *arg) {
     if (arg && *arg) { puts("Usage: test-irq"); return; }
@@ -538,6 +585,10 @@ int main(void) {
             shell_uartload(arg);
         } else if (str_equals(cmd, "lcd")) {
             shell_lcd(arg);
+        } else if (str_equals(cmd, "test-priv")) {
+            shell_test_priv(arg);
+        } else if (str_equals(cmd, "test-sv32")) {
+            shell_test_sv32(arg);
 #ifdef CONFIG_APP_TEST_M
         } else if (str_equals(cmd, "test-m")) {
             shell_test_m(arg);

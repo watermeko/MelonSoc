@@ -445,6 +445,10 @@ int main(int argc, char** argv) {
   if (!args.xmodem_image.empty() && sim_args.empty())
     sim_args.push_back("uartload");
   bool sim_args_all_sent = sim_args.empty();
+  std::string uart_output;
+  bool test_failed = false;
+  size_t passed_tests = 0;
+  size_t prompt_count = 0;
 
   uint64_t i = 0;
   while (!Verilated::gotFinish()) {
@@ -477,7 +481,31 @@ int main(int argc, char** argv) {
     dut.rxd = uart.line;
 
     tick(dut, ddr, time);
-    xmodem.on_tx_byte(tx_monitor.tick(dut.txd), uart);
+    int tx_byte = tx_monitor.tick(dut.txd);
+    xmodem.on_tx_byte(tx_byte, uart);
+    if (tx_byte >= 0 && !sim_args.empty()) {
+      uart_output.push_back(static_cast<char>(tx_byte));
+      if (uart_output.find("FAILED") != std::string::npos) {
+        test_failed = true;
+        break;
+      }
+      size_t pos = 0;
+      size_t count = 0;
+      while ((pos = uart_output.find("PASSED", pos)) != std::string::npos) {
+        ++count;
+        pos += 6;
+      }
+      passed_tests = count;
+      pos = 0;
+      count = 0;
+      while ((pos = uart_output.find("> ", pos)) != std::string::npos) {
+        ++count;
+        pos += 2;
+      }
+      prompt_count = count;
+      if (sim_args_all_sent && prompt_count >= (sim_args.size() + 1))
+        break;
+    }
     ++i;
   }
 
@@ -490,6 +518,22 @@ int main(int argc, char** argv) {
       return 1;
     } else {
       std::fprintf(stderr, "[XMODEM] transfer did not finish\n");
+      dut.final();
+      return 1;
+    }
+  }
+
+  if (!sim_args.empty()) {
+    if (test_failed) {
+      std::fprintf(stderr, "[SIM] test reported failure\n");
+      dut.final();
+      return 1;
+    }
+    if ((passed_tests < sim_args.size()) ||
+        (prompt_count < (sim_args.size() + 1))) {
+      std::fprintf(stderr,
+                   "[SIM] tests did not complete: %zu pass markers, %zu prompts, %zu commands\n",
+                   passed_tests, prompt_count, sim_args.size());
       dut.final();
       return 1;
     }
