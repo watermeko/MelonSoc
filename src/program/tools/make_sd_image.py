@@ -1,14 +1,30 @@
 #!/usr/bin/env python3
-import sys
+import argparse
 
-boot_bin, image_hex = sys.argv[1], sys.argv[2]
+
+parser = argparse.ArgumentParser(description="Create the MelonSoc simulation SD image")
+parser.add_argument("boot_bin")
+parser.add_argument("image_hex")
+parser.add_argument("--size-mib", type=int, default=16)
+args = parser.parse_args()
+
+if args.size_mib <= 0:
+    parser.error("--size-mib must be positive")
+
+boot_bin, image_hex = args.boot_bin, args.image_hex
 with open(boot_bin, "rb") as f:
     boot = f.read()
 
-sectors = 4096
+# Keep this in sync with SIM_SD_IMAGE_WORDS passed to Verilator by the
+# top-level Makefile. One FAT32 cluster is one 512-byte sector.
+sectors = args.size_mib * 1024 * 1024 // 512
 img = bytearray(sectors * 512)
 fat_lba = 32
-fat_sectors = 32
+# Each FAT32 entry is four bytes. Account for the reserved area and for the
+# FAT itself when choosing the smallest table that covers all data clusters.
+fat_sectors = (sectors - fat_lba + 127) // 128
+while fat_lba + fat_sectors + (fat_sectors * 128 - 2) < sectors:
+    fat_sectors += 1
 data_lba = fat_lba + fat_sectors
 root_cluster = 2
 file_cluster = 3
@@ -32,6 +48,14 @@ fat[4:8] = b"\xff\xff\xff\x0f"
 fat[root_cluster * 4:root_cluster * 4 + 4] = b"\xff\xff\xff\x0f"
 
 clusters = (len(boot) + 511) // 512
+if file_cluster + clusters > fat_sectors * 512 // 4:
+    raise SystemExit(
+        f"BOOT.BIN does not fit in the {args.size_mib} MiB simulation SD image"
+    )
+if data_lba + (file_cluster - 2) + clusters > sectors:
+    raise SystemExit(
+        f"BOOT.BIN does not fit in the {args.size_mib} MiB simulation SD image"
+    )
 for i in range(clusters):
     cl = file_cluster + i
     nxt = 0x0FFFFFFF if i == clusters - 1 else cl + 1

@@ -9,7 +9,7 @@ SECTIONS {
 
     .text : {
         . = ALIGN(4);
-	build/boot/program.o (.text)
+	program/build/boot/program.o (.text)
         *(.text*)
     } > PROGROM
 

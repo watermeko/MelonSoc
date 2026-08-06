@@ -248,6 +248,8 @@ struct SimArgs {
   uint32_t uart_baud = 115'200;
   std::vector<std::string> sim_args;
   std::string xmodem_image;
+  std::string ddr_image;
+  std::string expect;
   int xmodem_corrupt_block = -1;
 };
 
@@ -305,6 +307,8 @@ static void print_help(const char* argv0) {
       "  --sim-arg <cmd>         Shell command to inject via UART at startup.\n"
       "                          Repeatable; each is sent with a 1M-cycle gap.\n"
       "  --xmodem-image <file>   Auto-run uartload and send BOOT.BIN.\n"
+      "  --ddr-image <file>      Preload a flat image at DDR 0x80000000.\n"
+      "  --expect <text>         Exit successfully after UART prints text.\n"
       "  --xmodem-corrupt-block <N>  Corrupt block N once for retry testing.\n"
       "  --help                  Show this help\n",
       argv0);
@@ -330,6 +334,10 @@ static SimArgs parse_args(int argc, char** argv) {
       a.sim_args.push_back(argv[++i]);
     } else if (arg == "--xmodem-image" && i + 1 < argc) {
       a.xmodem_image = argv[++i];
+    } else if (arg == "--ddr-image" && i + 1 < argc) {
+      a.ddr_image = argv[++i];
+    } else if (arg == "--expect" && i + 1 < argc) {
+      a.expect = argv[++i];
     } else if (arg == "--xmodem-corrupt-block" && i + 1 < argc) {
       a.xmodem_corrupt_block = static_cast<int>(parse_u32(argv[++i], 0));
     } else {
@@ -427,6 +435,26 @@ int main(int argc, char** argv) {
     }
   }
 
+  if (!args.ddr_image.empty()) {
+    std::string image = read_file_all(args.ddr_image);
+    if (image.empty()) {
+      std::fprintf(stderr, "Cannot read DDR image: %s\n",
+                   args.ddr_image.c_str());
+      return 2;
+    }
+    for (size_t offset = 0; offset < image.size(); ++offset) {
+      uint32_t app_addr = static_cast<uint32_t>(offset >> 1);
+      auto& line = ddr.mem[DdrAppModel::line_addr(app_addr)];
+      size_t byte_in_line = offset & 0xfu;
+      size_t word = byte_in_line >> 2;
+      size_t shift = (byte_in_line & 3u) * 8u;
+      line[word] = (line[word] & ~(0xffu << shift)) |
+                   (static_cast<uint32_t>(image[offset]) << shift);
+    }
+    std::fprintf(stderr, "[DDR] preloaded %zu bytes at 0x80000000\n",
+                 image.size());
+  }
+
   if (!args.max_cycles_user && !::isatty(STDIN_FILENO)) {
     args.max_cycles = 80'000'000;
   }
@@ -447,12 +475,19 @@ int main(int argc, char** argv) {
   bool sim_args_all_sent = sim_args.empty();
   std::string uart_output;
   bool test_failed = false;
+  bool expected_seen = false;
   size_t passed_tests = 0;
   size_t prompt_count = 0;
+  uint64_t next_progress_cycle = 25'000'000;
 
   uint64_t i = 0;
   while (!Verilated::gotFinish()) {
     if (args.max_cycles != 0 && i >= args.max_cycles) break;
+    if (i == next_progress_cycle) {
+      std::fprintf(stderr, "[SIM] progress: %llu cycles\n",
+                   static_cast<unsigned long long>(i));
+      next_progress_cycle += 25'000'000;
+    }
 
     // Inject --sim-arg commands at intervals after boot.
     // First command at 2M cycles, subsequent every 1M.
@@ -483,8 +518,13 @@ int main(int argc, char** argv) {
     tick(dut, ddr, time);
     int tx_byte = tx_monitor.tick(dut.txd);
     xmodem.on_tx_byte(tx_byte, uart);
-    if (tx_byte >= 0 && !sim_args.empty()) {
+    if (tx_byte >= 0 && (!sim_args.empty() || !args.expect.empty())) {
       uart_output.push_back(static_cast<char>(tx_byte));
+      if (!args.expect.empty() &&
+          uart_output.find(args.expect) != std::string::npos) {
+        expected_seen = true;
+        break;
+      }
       if (uart_output.find("FAILED") != std::string::npos) {
         test_failed = true;
         break;
@@ -523,7 +563,16 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (!sim_args.empty()) {
+  if (!args.expect.empty()) {
+    if (!expected_seen) {
+      std::fprintf(stderr, "[SIM] expected UART text not seen: %s\n",
+                   args.expect.c_str());
+      dut.final();
+      return 1;
+    }
+    std::fprintf(stderr, "[SIM] observed expected UART text: %s\n",
+                 args.expect.c_str());
+  } else if (!sim_args.empty()) {
     if (test_failed) {
       std::fprintf(stderr, "[SIM] test reported failure\n");
       dut.final();

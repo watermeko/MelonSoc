@@ -35,7 +35,7 @@ test_sv32_data:
     la t4, sv32_test_word
     srli t3, t4, 12
     slli t3, t3, 10
-    ori t3, t3, 0x0c7       # V|R|W|A|D
+    ori t3, t3, 0x007       # V|R|W; hardware must set A/D.
     sw t3, 0(t1)
 
     li t3, 0x13579bdf
@@ -70,6 +70,10 @@ test_sv32_data:
     bne a1, t3, sv32_fail_load
     lw t3, 0(t4)
     bne t3, a2, sv32_fail_store
+    lw t3, 0(t1)
+    andi t3, t3, 0xc0
+    li t2, 0xc0
+    bne t3, t2, sv32_fail_ad
     li a0, 0
     j sv32_finish
 
@@ -79,6 +83,10 @@ sv32_fail_load:
 
 sv32_fail_store:
     li a0, 2
+    j sv32_finish
+
+sv32_fail_ad:
+    li a0, 3
 
 sv32_finish:
     mv sp, s0

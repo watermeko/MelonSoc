@@ -7,11 +7,12 @@
             );
             logic [ADDR_W-1:0] addr;
             logic              ren;
+            logic              flush;
             logic [DATA_W-1:0] rdata;
             logic              stall;
 
-            modport master (output addr, ren, input rdata, stall);
-            modport slave  (input addr, ren, output rdata, stall);
+            modport master (output addr, ren, flush, input rdata, stall);
+            modport slave  (input addr, ren, flush, output rdata, stall);
         endinterface
 
         interface wb_if #(

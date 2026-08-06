@@ -33,11 +33,11 @@
 
 void raystones_run(void);
 
-typedef void (*entry_fn)(void);
+typedef void (*entry_fn)(uint32_t hartid, uintptr_t fdt_addr);
 
 static void boot_jump_to_ddr(void) {
     asm volatile("csrwi mstatus, 0\ncsrwi mie, 0" ::: "memory");
-    ((entry_fn)BOOT_IMAGE_LOAD_ADDR)();
+    ((entry_fn)BOOT_IMAGE_LOAD_ADDR)(0, 0);
 
     for (;;) {
     }
@@ -103,12 +103,13 @@ static int parse_u32_dec_prefix(const char **ps, uint32_t *out) {
     return 1;
 }
 
-static int parse_two_u32_dec(const char *s, uint32_t *a, uint32_t *b) {
+static int parse_three_u32_dec(const char *s, uint32_t *a, uint32_t *b, uint32_t *c) {
     if (!s) return 0;
     if (!parse_u32_dec_prefix(&s, a)) return 0;
     while (*s == ' ') ++s;
-    if (*s == 0) return 0;
-    if (!parse_u32_dec_prefix(&s, b)) return 0;
+    if (*s == 0 || !parse_u32_dec_prefix(&s, b)) return 0;
+    while (*s == ' ') ++s;
+    if (*s == 0 || !parse_u32_dec_prefix(&s, c)) return 0;
     while (*s == ' ') ++s;
     return *s == 0;
 }
@@ -145,10 +146,11 @@ static void shell_help(void) {
     puts("  blink <seconds>    - alternate LEDs every N seconds");
     puts("  print <text>       - print text");
     puts("  i2c_scan           - scan I2C 7-bit addresses");
-    puts("  sdcard_rd <skip> <count> - read sector 0 and hex dump bytes");
+    puts("  sdcard_rd <lba> <skip> <count> - read SD sector and hex dump bytes");
     puts("  raystones          - run the raystones benchmark");
     puts("  sdload             - load BOOT.BIN from SD and jump to DDR app");
     puts("  uartload           - receive BOOT.BIN via XMODEM-CRC and jump to DDR app");
+    puts("  ddrboot            - jump to a preloaded image at 0x80000000");
     puts("  lcd                - draw colorbar on the DDR-backed LCD framebuffer");
     puts("  test-priv          - test Bare M/S/U privilege transitions");
     puts("  test-sv32          - test Sv32 data translation and page walk");
@@ -244,9 +246,9 @@ static void shell_blink(const char *arg) {
 }
 
 static void shell_sdcard_rd(const char *arg) {
-    uint32_t skip, count;
-    if (!parse_two_u32_dec(arg, &skip, &count)) {
-        puts("Usage: sdcard_rd <skip> <count>");
+    uint32_t lba, skip, count;
+    if (!parse_three_u32_dec(arg, &lba, &skip, &count)) {
+        puts("Usage: sdcard_rd <lba> <skip> <count>");
         return;
     }
     if (skip >= 512u || count > 512u || (skip + count) > 512u) {
@@ -254,11 +256,11 @@ static void shell_sdcard_rd(const char *arg) {
         return;
     }
     static uint8_t sector[512];
-    if (sdcard_read_block(0u, sector) != 0) {
+    if (sdcard_read_block(lba, sector) != 0) {
         printf("Error: sdcard read failed (err=0x%x)\n", (unsigned int)sdcard_last_error());
         return;
     }
-    puts("SD sector0:");
+    printf("SD sector %u:\n", (unsigned int)lba);
     static const char hex[] = "0123456789ABCDEF";
     for (uint32_t i = 0; i < count; ++i) {
         uint8_t b = sector[skip + i];
@@ -289,14 +291,23 @@ static void shell_sdload(const char *arg) {
         return;
     }
     puts("Bootloader: SD ready");
+    printf("Bootloader: SD addressing %s ocr=0x%x\n",
+           sdcard_is_high_capacity() ? "SDHC block" : "SDSC byte",
+           (unsigned int)sdcard_ocr());
 
     uint32_t size = 0;
     int rc = fatboot_load(0x80000000u, &size);
     if (rc != 0) {
-        printf("Bootloader: FAT load failed rc=%d err=0x%x\n", rc, (unsigned int)sdcard_last_error());
+        uint32_t crc = sdcard_last_crc();
+        printf("Bootloader: FAT load failed rc=%d err=0x%x st=0x%x dbg=0x%x crc_rx=0x%x crc_calc=0x%x\n",
+               rc, (unsigned int)sdcard_last_error(),
+               (unsigned int)sdcard_last_status(),
+               (unsigned int)sdcard_last_debug(),
+               (unsigned int)(crc >> 16), (unsigned int)(crc & 0xffffu));
         return;
     }
 
+    printf("Bootloader: SD image ready (%u bytes)\n", (unsigned)size);
     boot_jump_to_ddr();
 }
 
@@ -317,6 +328,11 @@ static void shell_uartload(const char *arg) {
     }
 
     printf("Bootloader: UART image ready (%u bytes)\n", (unsigned)size);
+    boot_jump_to_ddr();
+}
+
+static void shell_ddrboot(const char *arg) {
+    if (arg && *arg) { puts("Usage: ddrboot"); return; }
     boot_jump_to_ddr();
 }
 
@@ -583,6 +599,8 @@ int main(void) {
             shell_sdload(arg);
         } else if (str_equals(cmd, "uartload")) {
             shell_uartload(arg);
+        } else if (str_equals(cmd, "ddrboot")) {
+            shell_ddrboot(arg);
         } else if (str_equals(cmd, "lcd")) {
             shell_lcd(arg);
         } else if (str_equals(cmd, "test-priv")) {

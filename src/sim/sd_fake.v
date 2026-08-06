@@ -637,7 +637,11 @@ always @ (negedge sdclk or negedge rstn_sdclk_n)
             endcase
         end
         response_yield;
-        data_response_yield;
+        // A read data token may follow the command response immediately, but
+        // it must not overlap the response frame.  Keeping read_idx stopped
+        // until response_end also exercises the host's minimum-Nac path.
+        if(response_end)
+            data_response_yield;
     end
 
 

@@ -41,6 +41,8 @@ module priv_csr (
     localparam logic [31:0] MEDELEG_MASK = 32'h0000_b3ff;
     localparam logic [31:0] MIDELEG_MASK = 32'h0000_0222;
     localparam logic [31:0] IRQ_MASK = 32'h0000_0aaa;
+    localparam logic [31:0] SIP_WRITE_MASK = 32'h0000_0002;
+    localparam logic [31:0] MIP_WRITE_MASK = 32'h0000_0222;
 
     logic [1:0] current_priv;
     logic [31:0] mstatus;
@@ -122,7 +124,9 @@ module priv_csr (
             12'hb02: csr_rdata_o = instret_counter[31:0];
             12'hb82: csr_rdata_o = instret_counter[63:32];
             12'hc00: csr_rdata_o = cycle_counter[31:0];
+            12'hc01: csr_rdata_o = cycle_counter[31:0];
             12'hc80: csr_rdata_o = cycle_counter[63:32];
+            12'hc81: csr_rdata_o = cycle_counter[63:32];
             12'hc02: csr_rdata_o = instret_counter[31:0];
             12'hc82: csr_rdata_o = instret_counter[63:32];
             12'hf11: csr_rdata_o = 32'b0;
@@ -143,6 +147,12 @@ module priv_csr (
                 counter_allowed = mcounteren[0];
             else if (current_priv == PRIV_U)
                 counter_allowed = mcounteren[0] && scounteren[0];
+        end
+        else if ((csr_addr_i == 12'hc01) || (csr_addr_i == 12'hc81)) begin
+            if (current_priv == PRIV_S)
+                counter_allowed = mcounteren[1];
+            else if (current_priv == PRIV_U)
+                counter_allowed = mcounteren[1] && scounteren[1];
         end
         else if ((csr_addr_i == 12'hc02) || (csr_addr_i == 12'hc82)) begin
             if (current_priv == PRIV_S)
@@ -316,14 +326,14 @@ module priv_csr (
                     12'h105: stvec <= (csr_wdata_i[1:0] <= 2'b01) ?
                                       {csr_wdata_i[31:2], csr_wdata_i[1:0]} :
                                       {csr_wdata_i[31:2], 2'b00};
-                    12'h106: scounteren <= csr_wdata_i & 32'h0000_0005;
+                    12'h106: scounteren <= csr_wdata_i & 32'h0000_0007;
                     12'h140: sscratch <= csr_wdata_i;
                     12'h141: sepc <= {csr_wdata_i[31:1], 1'b0};
                     12'h142: scause <= csr_wdata_i;
                     12'h143: stval <= csr_wdata_i;
                     12'h144: supervisor_pending <=
-                              (supervisor_pending & ~32'h0000_0002) |
-                              (csr_wdata_i & 32'h0000_0002);
+                              (supervisor_pending & ~SIP_WRITE_MASK) |
+                              (csr_wdata_i & SIP_WRITE_MASK);
                     12'h180: satp <= csr_wdata_i;
                     12'h300: mstatus <= warl_mstatus(csr_wdata_i);
                     12'h302: medeleg <= csr_wdata_i & MEDELEG_MASK;
@@ -332,14 +342,14 @@ module priv_csr (
                     12'h305: mtvec <= (csr_wdata_i[1:0] <= 2'b01) ?
                                       {csr_wdata_i[31:2], csr_wdata_i[1:0]} :
                                       {csr_wdata_i[31:2], 2'b00};
-                    12'h306: mcounteren <= csr_wdata_i & 32'h0000_0005;
+                    12'h306: mcounteren <= csr_wdata_i & 32'h0000_0007;
                     12'h340: mscratch <= csr_wdata_i;
                     12'h341: mepc <= {csr_wdata_i[31:1], 1'b0};
                     12'h342: mcause <= csr_wdata_i;
                     12'h343: mtval <= csr_wdata_i;
                     12'h344: supervisor_pending <=
-                              (supervisor_pending & ~32'h0000_0002) |
-                              (csr_wdata_i & 32'h0000_0002);
+                              (supervisor_pending & ~MIP_WRITE_MASK) |
+                              (csr_wdata_i & MIP_WRITE_MASK);
                     12'hb00: cycle_counter[31:0] <= csr_wdata_i;
                     12'hb80: cycle_counter[63:32] <= csr_wdata_i;
                     12'hb02: instret_counter[31:0] <= csr_wdata_i;
@@ -347,6 +357,7 @@ module priv_csr (
                     default: begin end
                 endcase
             end
+
         end
     end
 endmodule

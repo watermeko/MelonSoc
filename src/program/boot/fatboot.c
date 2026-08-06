@@ -1,5 +1,6 @@
 #include "fatboot.h"
 #include "boot_image.h"
+#include "print.h"
 #include "sdcard.h"
 
 static uint16_t rd16(const uint8_t *p) {
@@ -25,8 +26,31 @@ static int name_match(const uint8_t *p) {
            p[8] == 'B' && p[9] == 'I' && p[10] == 'N';
 }
 
+static void copy_payload(uint8_t **dst_io, const uint8_t *src, uint32_t count) {
+    volatile uint32_t *dst_words = (volatile uint32_t *)(*dst_io);
+    const uint32_t *src_words = (const uint32_t *)src;
+
+    while (count >= 4u) {
+        *dst_words++ = *src_words++;
+        count -= 4u;
+    }
+
+    volatile uint8_t *dst_bytes = (volatile uint8_t *)dst_words;
+    const uint8_t *src_bytes = (const uint8_t *)src_words;
+    while (count--) {
+        *dst_bytes++ = *src_bytes++;
+    }
+    *dst_io = (uint8_t *)dst_bytes;
+}
+
 int fatboot_load(uint32_t dst, uint32_t *size_out) {
-    uint8_t sector[512];
+    /*
+     * The ROM shell has a small SRAM stack.  Keep the sector workspace in
+     * static storage: the boot path is single-threaded, and this also avoids
+     * placing a full sector immediately below the top of DATARAM.
+     */
+    static uint32_t sector_words[128];
+    uint8_t *sector = (uint8_t *)sector_words;
     uint32_t part_lba = 0;
     if (sdcard_read_block(0, sector) != 0)
         return -1;
@@ -45,6 +69,10 @@ int fatboot_load(uint32_t dst, uint32_t *size_out) {
     uint32_t fat_size = rd32(&sector[36]);
     uint32_t root_cluster = rd32(&sector[44]);
     if (bytes_per_sec != 512) {
+        printf("Bootloader: FAT BPB diag lba=%x b0=%x b11=%x b12=%x b13=%x bps=%x\n",
+               (unsigned)part_lba, (unsigned)sector[0],
+               (unsigned)sector[11], (unsigned)sector[12],
+               (unsigned)sector[13], (unsigned)bytes_per_sec);
         return -2;
     }
 
@@ -90,8 +118,7 @@ int fatboot_load(uint32_t dst, uint32_t *size_out) {
         return -5;
 
     uint8_t header[BOOT_IMAGE_HEADER_SIZE];
-    uint8_t *text_out = (uint8_t *)dst;
-    uint8_t *data_out = 0;
+    uint8_t *payload_out = (uint8_t *)dst;
     uint32_t file_off = 0;
     uint32_t text_size = 0;
     uint32_t data_size = 0;
@@ -103,29 +130,26 @@ int fatboot_load(uint32_t dst, uint32_t *size_out) {
             if (sdcard_read_block(first + s, sector) != 0)
                 return -1;
             uint32_t n = remaining < 512u ? remaining : 512u;
-            for (uint32_t i = 0; i < n; ++i, ++file_off) {
-                uint8_t byte = sector[i];
+            uint32_t payload_off = 0;
 
-                if (file_off < BOOT_IMAGE_HEADER_SIZE) {
-                    header[file_off] = byte;
-                    if (file_off + 1u == BOOT_IMAGE_HEADER_SIZE) {
-                        uint32_t payload_size;
-                        int image_rc = boot_image_parse_header(
-                            header, dst, &text_size, &data_size, &payload_size);
-                        if (image_rc != BOOT_IMAGE_OK)
-                            return -5;
-                        (void)payload_size;
-                        if (boot_image_validate_file_size(file_size, text_size,
-                                                          data_size) != BOOT_IMAGE_OK)
-                            return -6;
-                        data_out = (uint8_t *)(dst + text_size);
-                    }
-                } else if (file_off < BOOT_IMAGE_HEADER_SIZE + text_size) {
-                    *text_out++ = byte;
-                } else if (file_off < BOOT_IMAGE_HEADER_SIZE + text_size + data_size) {
-                    *data_out++ = byte;
-                }
+            if (file_off == 0u) {
+                for (uint32_t i = 0; i < BOOT_IMAGE_HEADER_SIZE; ++i)
+                    header[i] = sector[i];
+
+                uint32_t payload_size;
+                int image_rc = boot_image_parse_header(
+                    header, dst, &text_size, &data_size, &payload_size);
+                if (image_rc != BOOT_IMAGE_OK)
+                    return -5;
+                if (boot_image_validate_file_size(file_size, text_size,
+                                                  data_size) != BOOT_IMAGE_OK)
+                    return -6;
+                (void)payload_size;
+                payload_off = BOOT_IMAGE_HEADER_SIZE;
             }
+
+            copy_payload(&payload_out, &sector[payload_off], n - payload_off);
+            file_off += n;
             remaining -= n;
         }
         if (remaining) {

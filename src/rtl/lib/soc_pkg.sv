@@ -38,6 +38,7 @@
             localparam logic [31:0] IO_SD_CTRL_ADDR    = IO_BASE_ADDR + 32'h0000_0068;
             localparam logic [31:0] IO_SD_RESP0_ADDR   = IO_BASE_ADDR + 32'h0000_006C;
             localparam logic [31:0] IO_SD_DEBUG_ADDR   = IO_BASE_ADDR + 32'h0000_0070;
+            localparam logic [31:0] IO_SD_CRC_ADDR     = IO_BASE_ADDR + 32'h0000_0074;
             localparam logic [31:0] IO_SD_DATA_ADDR    = IO_BASE_ADDR + 32'h0000_0080;
 
             // CLINT (Core Local Interruptor) — standard SiFive layout
@@ -86,7 +87,7 @@
                        ((word_addr >= IO_I2C_TXRX_ADDR) && (word_addr <= IO_I2C_DIV_ADDR)) ||
                        ((word_addr >= IO_TIMER_CTRL_ADDR) && (word_addr <= IO_TIMER_STATUS_ADDR)) ||
                        ((word_addr >= IO_SPI_TXRX_ADDR) && (word_addr <= IO_SPI_DIV_ADDR)) ||
-                       ((word_addr >= IO_SD_CMD_ADDR) && (word_addr <= IO_SD_DEBUG_ADDR)) ||
+                       ((word_addr >= IO_SD_CMD_ADDR) && (word_addr <= IO_SD_CRC_ADDR)) ||
                        ((word_addr >= IO_SD_DATA_ADDR) && (word_addr < (IO_SD_DATA_ADDR + 32'd512))) ||
                        (word_addr == IO_CLINT_MSIP_ADDR) ||
                        (word_addr == IO_CLINT_MTIMECMP_ADDR) ||

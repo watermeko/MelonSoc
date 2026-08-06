@@ -51,11 +51,11 @@ module mem #(
         data.dat_r = 32'b0;
 
 `ifdef BENCH
-        $readmemh("build/PROGROM.hex", PROGROM);
-        $readmemh("build/DATARAM.hex", DATARAM);
+        $readmemh("program/build/PROGROM.hex", PROGROM);
+        $readmemh("program/build/DATARAM.hex", DATARAM);
 `else
-        $readmemh("../build/PROGROM.hex", PROGROM);
-        $readmemh("../build/DATARAM.hex", DATARAM);
+        $readmemh("src/program/build/PROGROM.hex", PROGROM);
+        $readmemh("src/program/build/DATARAM.hex", DATARAM);
 `endif
 
 `ifdef BENCH

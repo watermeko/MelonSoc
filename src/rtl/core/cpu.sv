@@ -20,7 +20,13 @@ module cpu (
     imem_if core_instr();
     wb_if core_data();
     // ---------------------- 通用寄存器堆 ----------------------
-    logic [31:0] reg_bank [0:31];
+    // Keep the architectural register file in flip-flops.  GowinSyn otherwise
+    // folds the array and the ID/EX operand registers into synchronous SDPB
+    // outputs.  Those outputs continue following the decode addresses while
+    // the pipeline is stalled, whereas id_ex_rs{1,2}_val must hold their
+    // current instruction's operands.
+    logic [31:0] reg_bank [0:31] /* synthesis syn_ramstyle = "registers" */;
+    integer reg_reset_idx;
 
     // ---------------------- 流水线结构 ----------------------
     // 本核是一个简单的顺序执行流水线，并带有支持 RVC 的取指前端。
@@ -339,6 +345,7 @@ module cpu (
     logic        mem_wb_isLoad;
     logic [2:0]  mem_wb_funct3;
     logic [1:0]  mem_wb_addr_low;
+    logic [31:0] mem_wb_load_word;
     logic        mem_wb_wb_en;
     logic [31:0] mem_wb_wb_value;
 
@@ -360,6 +367,28 @@ module cpu (
         end
     endfunction
 
+    function automatic logic [31:0] format_load_data(
+        input logic [31:0] word,
+        input logic [2:0] funct3,
+        input logic [1:0] addr_low
+    );
+        logic [15:0] half_value;
+        logic [7:0] byte_value;
+        logic sign_bit;
+        begin
+            half_value = addr_low[1] ? word[31:16] : word[15:0];
+            byte_value = addr_low[0] ? half_value[15:8] : half_value[7:0];
+            sign_bit = ~funct3[2] &
+                       ((funct3[1:0] == 2'b00) ? byte_value[7] :
+                                                         half_value[15]);
+            case (funct3[1:0])
+                2'b00: format_load_data = {{24{sign_bit}}, byte_value};
+                2'b01: format_load_data = {{16{sign_bit}}, half_value};
+                default: format_load_data = word;
+            endcase
+        end
+    endfunction
+
     // ---------------------- 冒险检测 ----------------------
     // 这里处理的数据相关：
     // - 大多数 ALU 相关由 EX 阶段前递解决。
@@ -373,6 +402,8 @@ module cpu (
     logic stall_atomic;
     logic stall_mmu;
     logic stall_any;
+
+    assign mem_req = ex_mem_valid && (ex_mem_isLoad || ex_mem_isStore);
 
     typedef enum logic [2:0] {
         ATOMIC_IDLE,
@@ -433,8 +464,6 @@ module cpu (
         stall_load_use = 1'b0;
         stall_div = 1'b0;
         stall_mem = 1'b0;
-        mem_req = ex_mem_valid && (ex_mem_isLoad || ex_mem_isStore);
-
         // 当前一条指令是 load，且当前指令使用了它加载到的寄存器时，停顿流水线
         if (id_valid && id_ex_valid && id_ex_isLoad && (id_ex_rd != 5'd0)) begin
             if ((uses_rs1_d && (id_ex_rd == rs1_d)) || (uses_rs2_d && (id_ex_rd == rs2_d))) begin
@@ -974,22 +1003,9 @@ module cpu (
 
     // ---------------------- WB 阶段加载数据格式化 ----------------------
     always_comb begin
-        logic mem_byteAccess, mem_halfwordAccess;
-        logic [15:0] load_half;
-        logic [7:0]  load_byte;
-        logic load_sign;
-
-        mem_byteAccess     = (mem_wb_funct3[1:0] == 2'b00);
-        mem_halfwordAccess = (mem_wb_funct3[1:0] == 2'b01);
-
-        load_half = mem_wb_addr_low[1] ? core_data.dat_r[31:16] : core_data.dat_r[15:0];
-        load_byte = mem_wb_addr_low[0] ? load_half[15:8] : load_half[7:0];
-        load_sign = ~mem_wb_funct3[2] & (mem_byteAccess ? load_byte[7] : load_half[15]);
-
-        wb_load_data =
-            mem_byteAccess     ? {{24{load_sign}}, load_byte} :
-            mem_halfwordAccess ? {{16{load_sign}}, load_half} :
-            core_data.dat_r;
+        wb_load_data = format_load_data(mem_wb_load_word,
+                                        mem_wb_funct3,
+                                        mem_wb_addr_low);
     end
 
     always_comb begin
@@ -1004,6 +1020,7 @@ module cpu (
     always_comb begin
         core_instr.addr = pc_f;
         core_instr.ren  = fetch_req;
+        core_instr.flush = ex_redirect;
 
         core_data.adr   = (atomic_state != ATOMIC_IDLE) ? atomic_addr : ex_mem_addr;
         core_data.dat_w = (atomic_state != ATOMIC_IDLE) ?
@@ -1018,9 +1035,7 @@ module cpu (
                                   (atomic_state == ATOMIC_LR_READ || atomic_state == ATOMIC_SC_WRITE ||
                                    atomic_state == ATOMIC_AMO_READ || atomic_state == ATOMIC_AMO_WRITE)) || mem_req);
         core_data.stb   = core_data.cyc && ((atomic_state != ATOMIC_IDLE) ?
-                                  (atomic_started &&
-                                    !((atomic_state == ATOMIC_SC_WRITE || atomic_state == ATOMIC_AMO_WRITE) && core_data.ack)) :
-                                  mem_started);
+                                  atomic_started : mem_started);
         core_data.lock  = (atomic_state != ATOMIC_IDLE) &&
                      ((atomic_state == ATOMIC_LR_READ) || (atomic_state == ATOMIC_LR_CAPTURE) ||
                       (atomic_state == ATOMIC_SC_WRITE) || (atomic_state == ATOMIC_AMO_READ) ||
@@ -1057,6 +1072,9 @@ module cpu (
         if (!rst_n) begin
             halted <= 1'b0;
 
+            for (reg_reset_idx = 0; reg_reset_idx < 32; reg_reset_idx = reg_reset_idx + 1)
+                reg_bank[reg_reset_idx] <= 32'b0;
+
             {pc_f, if_valid, if_pc, f2_word, f2_valid,
              if_fetch_fault, if_fetch_page_fault,
              f2_fetch_fault, f2_fetch_page_fault} <= '0;
@@ -1087,9 +1105,10 @@ module cpu (
              } <= '0;
 
             { mem_wb_valid, mem_wb_rd, mem_wb_isLoad, mem_wb_funct3, mem_wb_addr_low,
+              mem_wb_load_word,
               mem_wb_wb_en, mem_wb_wb_value
             } <= '0;
-             mem_started <= 1'b0;
+            mem_started <= 1'b0;
             id_len    <= 32'd4;
             id_ex_len <= 32'd4;
         end
@@ -1265,10 +1284,37 @@ module cpu (
             // - flush（redirect/halt）或 load-use stall 时插入 bubble（id_ex_valid=0）。
             // - 除法 stall 时不更新 ID/EX
             if (!halted) begin
-                if (halt_now || ex_redirect || stall_load_use) begin
+                if (halt_now || ex_redirect) begin
                     id_ex_valid <= 1'b0;
                 end
-                else if (!stall_div && !stall_mem && !stall_atomic && !stall_mmu) begin
+                // Backpressure from the current EX instruction must take
+                // precedence over a dependency on the following ID
+                // instruction.  In particular, a load-use hazard can be
+                // asserted while the load is still waiting for a page-table
+                // walk.  Dropping ID/EX in that case loses the load entirely.
+                else if (stall_div || stall_mem || stall_atomic || stall_mmu) begin
+                    // An instruction held in EX can outlive an older producer
+                    // in MEM/WB (notably while an Sv32 walk is in progress).
+                    // Preserve the producer's retiring value in the held
+                    // operand snapshot after the normal forwarding source
+                    // disappears.
+                    if (wb_we && (mem_wb_rd != 5'd0)) begin
+                        if (mem_wb_rd == id_ex_rs1)
+                            id_ex_rs1_val <= wb_value;
+                        if (mem_wb_rd == id_ex_rs2)
+                            id_ex_rs2_val <= wb_value;
+                    end
+                    if (atomic_wb_valid && (atomic_wb_rd != 5'd0)) begin
+                        if (atomic_wb_rd == id_ex_rs1)
+                            id_ex_rs1_val <= atomic_wb_value;
+                        if (atomic_wb_rd == id_ex_rs2)
+                            id_ex_rs2_val <= atomic_wb_value;
+                    end
+                end
+                else if (stall_load_use) begin
+                    id_ex_valid <= 1'b0;
+                end
+                else begin
                     id_ex_valid  <= id_valid;
                     id_ex_pc     <= id_pc;
                     id_ex_instr  <= id_instr;
@@ -1323,8 +1369,6 @@ module cpu (
             // EX/MEM 更新
             if (!halted && !stall_mem && !stall_mmu &&
                 (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic && !atomic_complete) begin
-`ifdef BENCH
-`endif
                 ex_mem_valid <= id_ex_valid && !priv_trap_taken;
                 ex_mem_rd    <= id_ex_rd;
                 ex_mem_isLoad  <= id_ex_isLoad;
@@ -1342,6 +1386,17 @@ module cpu (
                 ex_mem_store_wmask <= ex_store_wmask;
                 ex_mem_wb_en    <= ex_wb_en;
                 ex_mem_wb_value <= ex_wb_value;
+            end
+            else if (!halted && !stall_mem && stall_mmu &&
+                     (atomic_state == ATOMIC_IDLE) && !ex_mem_isAtomic &&
+                     !atomic_complete) begin
+                // The older EX/MEM item has completed and is consumed by
+                // MEM/WB below.  A younger translation miss must prevent a
+                // replacement from entering EX/MEM, but must not leave the
+                // completed item valid or it will be issued to the bus again.
+                ex_mem_valid <= 1'b0;
+                ex_mem_isLoad <= 1'b0;
+                ex_mem_isStore <= 1'b0;
             end
             else if (atomic_complete) begin
                 ex_mem_valid <= 1'b0;
@@ -1365,6 +1420,7 @@ module cpu (
                 mem_wb_isLoad <= ex_mem_isLoad;
                 mem_wb_funct3 <= ex_mem_funct3;
                 mem_wb_addr_low <= ex_mem_addr[1:0];
+                mem_wb_load_word <= core_data.dat_r;
                 mem_wb_wb_en <= ex_mem_wb_en;
                 mem_wb_wb_value <= ex_mem_wb_value;
             end
@@ -1402,12 +1458,4 @@ module cpu (
         .remainder    (div_result_r)
     );
 
-`ifdef BENCH
-    integer i;
-    initial begin
-        for (i = 0; i < 32; ++i) begin
-            reg_bank[i] = 0;
-        end
-    end
-`endif
 endmodule

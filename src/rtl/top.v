@@ -95,6 +95,9 @@ module top(
     wire pll_lock;
     wire lcd_dclk_int;
     wire lcd_pll_lock;
+    wire soc_rst_n;
+    wire soc_async_rst_n;
+    logic [7:0] soc_reset_sync;
     logic [18:0] lcd_start_ctr = '0;
     logic        lcd_rst_n = 1'b0;
 
@@ -104,6 +107,18 @@ module top(
         .clkout(lcd_dclk_int)
     );
     assign lcd_dclk = lcd_dclk_int;
+    assign soc_async_rst_n = rst_n;
+
+    // Assert reset immediately, then release it synchronously in the 27 MHz
+    // clock domain that drives the CPU and peripherals.
+    always_ff @(posedge clk or negedge soc_async_rst_n) begin
+        if (!soc_async_rst_n)
+            soc_reset_sync <= 8'b0;
+        else
+            soc_reset_sync <= {soc_reset_sync[6:0], 1'b1};
+    end
+    assign soc_rst_n = soc_reset_sync[7];
+
     wire spi_cs_n_unused;
     wire spi_sck_unused;
     wire spi_mosi_unused;
@@ -133,9 +148,9 @@ module top(
     end
 
     SOC u_soc(
-            .clk        (clk       ),
+            .clk        (clk         ),
             .ddr_app_clk (clk_x1    ),
-            .rst_n      (rst_n     ),
+            .rst_n      (soc_rst_n),
             .leds       (leds      ),
             .rxd        (rxd       ),
             .txd        (txd       ),

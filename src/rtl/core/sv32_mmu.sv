@@ -57,6 +57,7 @@ module sv32_mmu (
         PTW_L0_WAIT,
         PTW_L0_CAPTURE,
         PTW_L0_CHECK,
+        PTW_AD_WAIT,
         PTW_FILL,
         PTW_FAULT
     } ptw_state_t;
@@ -79,6 +80,7 @@ module sv32_mmu (
     logic walk_superpage;
     logic walk_page_fault;
     logic walk_access_fault;
+    logic walk_killed;
     logic instr_fault_pending;
     logic instr_fault_page;
     logic [31:0] instr_fault_vaddr;
@@ -88,6 +90,8 @@ module sv32_mmu (
     logic dtlb_hit;
     logic [1:0] dtlb_hit_index;
     logic dtlb_permission_ok;
+    logic dtlb_access_allowed;
+    logic dtlb_ad_ready;
     logic [33:0] dtlb_pa;
     logic walk_active;
     logic instr_translate;
@@ -166,8 +170,9 @@ module sv32_mmu (
             allow_priv = 1'b1;
 
         allow_access = d_store_i ? hit.w : (hit.r || (mstatus_i[19] && hit.x));
-        dtlb_permission_ok = allow_priv && allow_access && hit.a &&
-                             (!d_store_i || hit.d);
+        dtlb_access_allowed = allow_priv && allow_access;
+        dtlb_ad_ready = hit.a && (!d_store_i || hit.d);
+        dtlb_permission_ok = dtlb_access_allowed && dtlb_ad_ready;
         dtlb_pa = hit.superpage ?
                   {hit.ppn[21:10], d_vaddr_i[21:0]} :
                   {hit.ppn, d_vaddr_i[11:0]};
@@ -185,10 +190,15 @@ module sv32_mmu (
             d_req_ready_o = 1'b1;
         end
         else if (dtlb_hit) begin
-            d_req_ready_o = 1'b1;
-            d_paddr_o = dtlb_pa[31:0];
-            d_page_fault_o = !dtlb_permission_ok;
-            d_access_fault_o = dtlb_permission_ok && (|dtlb_pa[33:32]);
+            if (!dtlb_access_allowed) begin
+                d_req_ready_o = 1'b1;
+                d_page_fault_o = 1'b1;
+            end
+            else if (dtlb_ad_ready) begin
+                d_req_ready_o = 1'b1;
+                d_paddr_o = dtlb_pa[31:0];
+                d_access_fault_o = |dtlb_pa[33:32];
+            end
         end
         else if ((ptw_state == PTW_FAULT) && (walk_vaddr == d_vaddr_i) &&
                  (walk_store == d_store_i)) begin
@@ -206,6 +216,7 @@ module sv32_mmu (
         phys_instr.ren = core_instr.ren &&
                          (!instr_translate || (itlb_hit && itlb_permission_ok &&
                                                !(|itlb_pa[33:32])));
+        phys_instr.flush = core_instr.flush;
         core_instr.rdata = phys_instr.rdata;
         core_instr.stall = phys_instr.stall;
         if (instr_translate && core_instr.ren) begin
@@ -225,6 +236,19 @@ module sv32_mmu (
             phys_data.cyc = 1'b1;
             phys_data.stb = 1'b1;
             phys_data.lock = 1'b0;
+            core_data.dat_r = 32'b0;
+            core_data.ack = 1'b0;
+            core_data.stall = core_data.cyc;
+        end
+        else if (ptw_state == PTW_AD_WAIT) begin
+            phys_data.adr = walk_pte_addr;
+            phys_data.dat_w = walk_pte | 32'h0000_0040 |
+                              (walk_store ? 32'h0000_0080 : 32'b0);
+            phys_data.sel = 4'b1111;
+            phys_data.we = 1'b1;
+            phys_data.cyc = 1'b1;
+            phys_data.stb = 1'b1;
+            phys_data.lock = 1'b1;
             core_data.dat_r = 32'b0;
             core_data.ack = 1'b0;
             core_data.stall = core_data.cyc;
@@ -268,8 +292,7 @@ module sv32_mmu (
             allow_priv = (access_priv == PRIV_U) ? pte[4] :
                          (access_priv == PRIV_S) ? (!pte[4] || sum) : 1'b1;
             allow_access = store_access ? pte[2] : (pte[1] || (mxr && pte[3]));
-            return allow_priv && allow_access && pte[6] &&
-                   (!store_access || pte[7]);
+            return allow_priv && allow_access;
         end
     endfunction
 
@@ -291,6 +314,7 @@ module sv32_mmu (
             walk_superpage <= 1'b0;
             walk_page_fault <= 1'b0;
             walk_access_fault <= 1'b0;
+            walk_killed <= 1'b0;
             instr_fault_pending <= 1'b0;
             instr_fault_page <= 1'b0;
             instr_fault_vaddr <= 32'b0;
@@ -312,10 +336,20 @@ module sv32_mmu (
             else if (instr_fault_pending && core_instr.ren && !core_instr.stall)
                 instr_fault_pending <= 1'b0;
 
+            // A frontend redirect can cancel an instruction walk while its
+            // DDR request is still in flight.  Drain that response before
+            // allowing another walk to reuse phys_data; otherwise the new
+            // walk can consume the canceled request's ACK and PTE.
+            if (frontend_flush_i && walk_is_instr && (ptw_state != PTW_IDLE))
+                walk_killed <= 1'b1;
+
             unique case (ptw_state)
                 PTW_IDLE: begin
-                    if (d_req_valid_i && data_translate && !dtlb_hit &&
+                    if (d_req_valid_i && data_translate &&
+                        (!dtlb_hit || (dtlb_access_allowed && !dtlb_ad_ready)) &&
                         !core_data.cyc) begin
+                        if (dtlb_hit)
+                            dtlb[dtlb_hit_index].valid <= 1'b0;
                         walk_vaddr <= d_vaddr_i;
                         walk_store <= d_store_i;
                         walk_is_instr <= 1'b0;
@@ -326,6 +360,7 @@ module sv32_mmu (
                         walk_global <= 1'b0;
                         walk_page_fault <= 1'b0;
                         walk_access_fault <= 1'b0;
+                        walk_killed <= 1'b0;
                         walk_pte_addr <= {satp_i[19:0], 12'b0} +
                                          {20'b0, d_vaddr_i[31:22], 2'b0};
                         if ((satp_i[21:20] != 0) ||
@@ -352,6 +387,7 @@ module sv32_mmu (
                         walk_global <= 1'b0;
                         walk_page_fault <= 1'b0;
                         walk_access_fault <= 1'b0;
+                        walk_killed <= 1'b0;
                         walk_pte_addr <= {satp_i[19:0], 12'b0} +
                                          {20'b0, core_instr.addr[31:22], 2'b0};
                         if ((satp_i[21:20] != 0) ||
@@ -368,8 +404,13 @@ module sv32_mmu (
                     end
                 end
                 PTW_L1_WAIT: begin
-                    if (phys_data.ack)
-                        ptw_state <= PTW_L1_CAPTURE;
+                    if (phys_data.ack) begin
+                        // The arbiter only guarantees the response data on
+                        // the ACK cycle.  Latch it before releasing the PTW
+                        // ownership of phys_data.
+                        walk_pte <= phys_data.dat_r;
+                        ptw_state <= PTW_L1_CHECK;
+                    end
                 end
                 PTW_L1_CAPTURE: begin
                     walk_pte <= phys_data.dat_r;
@@ -384,7 +425,7 @@ module sv32_mmu (
                     else if (walk_pte[1] || walk_pte[3]) begin
                         if ((walk_pte[19:10] != 0) ||
                             (walk_is_instr ?
-                             !(walk_pte[3] && walk_pte[6] &&
+                             !(walk_pte[3] &&
                                ((walk_priv == PRIV_U) ? walk_pte[4] : !walk_pte[4])) :
                              !pte_permission_ok(walk_pte, walk_store, walk_priv,
                                                 walk_sum, walk_mxr))) begin
@@ -393,7 +434,9 @@ module sv32_mmu (
                         end
                         else begin
                             walk_superpage <= 1'b1;
-                            ptw_state <= PTW_FILL;
+                            ptw_state <= (!walk_pte[6] ||
+                                          (walk_store && !walk_pte[7])) ?
+                                         PTW_AD_WAIT : PTW_FILL;
                         end
                     end
                     else begin
@@ -413,8 +456,10 @@ module sv32_mmu (
                     end
                 end
                 PTW_L0_WAIT: begin
-                    if (phys_data.ack)
-                        ptw_state <= PTW_L0_CAPTURE;
+                    if (phys_data.ack) begin
+                        walk_pte <= phys_data.dat_r;
+                        ptw_state <= PTW_L0_CHECK;
+                    end
                 end
                 PTW_L0_CAPTURE: begin
                     walk_pte <= phys_data.dat_r;
@@ -424,7 +469,7 @@ module sv32_mmu (
                     walk_global <= walk_global | walk_pte[5];
                     if (pte_invalid(walk_pte) || !(walk_pte[1] || walk_pte[3]) ||
                         (walk_is_instr ?
-                         !(walk_pte[3] && walk_pte[6] &&
+                         !(walk_pte[3] &&
                            ((walk_priv == PRIV_U) ? walk_pte[4] : !walk_pte[4])) :
                          !pte_permission_ok(walk_pte, walk_store, walk_priv,
                                             walk_sum, walk_mxr))) begin
@@ -433,11 +478,23 @@ module sv32_mmu (
                     end
                     else begin
                         walk_superpage <= 1'b0;
+                        ptw_state <= (!walk_pte[6] ||
+                                      (walk_store && !walk_pte[7])) ?
+                                     PTW_AD_WAIT : PTW_FILL;
+                    end
+                end
+                PTW_AD_WAIT: begin
+                    if (phys_data.ack) begin
+                        walk_pte <= walk_pte | 32'h0000_0040 |
+                                    (walk_store ? 32'h0000_0080 : 32'b0);
                         ptw_state <= PTW_FILL;
                     end
                 end
                 PTW_FILL: begin
-                    if (walk_is_instr) begin
+                    if (walk_killed) begin
+                        walk_killed <= 1'b0;
+                    end
+                    else if (walk_is_instr) begin
                         itlb[itlb_replace].valid <= 1'b1;
                         itlb[itlb_replace].global_mapping <= walk_global | walk_pte[5];
                         itlb[itlb_replace].superpage <= walk_superpage;
@@ -470,7 +527,13 @@ module sv32_mmu (
                     ptw_state <= PTW_IDLE;
                 end
                 PTW_FAULT: begin
-                    if (walk_is_instr) begin
+                    if (walk_killed) begin
+                        walk_killed <= 1'b0;
+                        walk_page_fault <= 1'b0;
+                        walk_access_fault <= 1'b0;
+                        ptw_state <= PTW_IDLE;
+                    end
+                    else if (walk_is_instr) begin
                         instr_fault_pending <= 1'b1;
                         instr_fault_page <= walk_page_fault;
                         instr_fault_vaddr <= walk_vaddr;

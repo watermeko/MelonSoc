@@ -134,7 +134,11 @@ module ddr3_wb_bridge #(
             end
             else if (bus_busy && (rsp_toggle_bus_sync != rsp_toggle_bus_seen)) begin
                 rsp_toggle_bus_seen <= rsp_toggle_bus_sync;
-                bus.dat_r <= rsp_dat_r;
+                // The response payload crosses from app_clk with the toggle.
+                // Use the two-stage synchronized copy; sampling rsp_dat_r
+                // directly here can occasionally return a word from another
+                // DDR line even though the response toggle is synchronized.
+                bus.dat_r <= rsp_dat_r_bus_sync;
                 rsp_ack_pending <= 1'b1;
             end
             else if (!bus_busy && bus.cyc && bus.stb && !bus.ack) begin

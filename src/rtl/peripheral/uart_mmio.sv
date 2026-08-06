@@ -152,80 +152,61 @@ module uart_tx #(
 
         input [7:0] tx_data,
         input tx_valid,
-        output reg tx_ready,
-        output reg txd
+        output logic tx_ready,
+        output logic txd
     );
 
-    localparam [12:0] BAUD_CNT_MAX = CLK_FREQ / UART_BAUD;
+    localparam integer BIT_TICKS_RAW =
+        (CLK_FREQ + (UART_BAUD / 2)) / UART_BAUD;
+    localparam integer BIT_TICKS = (BIT_TICKS_RAW > 0) ? BIT_TICKS_RAW : 1;
+    localparam integer BAUD_W = (BIT_TICKS > 1) ? $clog2(BIT_TICKS) : 1;
+    localparam logic [BAUD_W-1:0] BIT_TICKS_M1 = BIT_TICKS - 1;
 
-    reg [12:0] baud_cnt;
-    reg [3:0] data_bit_count;
-    reg [7:0] tx_data_reg;
+    logic [BAUD_W-1:0] baud_cnt;
+    logic [3:0]        bit_index;
+    logic [7:0]        tx_data_reg;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            tx_ready <= 1'b1;
-        else if (tx_valid) begin
-            tx_ready <= 1'b0;
-            tx_data_reg <= tx_data;
+    // One start bit, eight data bits (LSB first), and one stop bit.  A request
+    // is accepted only while ready; a stretched tx_valid can therefore not
+    // restart the baud counter or overwrite a byte already in flight.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            baud_cnt   <= '0;
+            bit_index  <= 4'd0;
+            tx_data_reg<= 8'd0;
+            tx_ready   <= 1'b1;
+            txd        <= STOP_BIT;
         end
-        else if ((baud_cnt == 13'd1)  && (data_bit_count == 4'd9))
-            tx_ready <= 1'b1;
-        else
-            tx_ready <= tx_ready;
-    end
+        else if (tx_ready) begin
+            baud_cnt  <= '0;
+            bit_index <= 4'd0;
+            txd       <= STOP_BIT;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            baud_cnt <= 13'b0;
-        else if (baud_cnt == (BAUD_CNT_MAX - 13'd1))
-            baud_cnt <= 13'b0;
-        else if (!tx_ready)
-            baud_cnt <= baud_cnt + 1'b1;
-        else
-            baud_cnt <= baud_cnt;
-    end
-
-
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            data_bit_count <= 4'b0;
-        else if (tx_ready && !tx_valid) begin
-            data_bit_count <= 4'b0;
+            if (tx_valid) begin
+                tx_data_reg <= tx_data;
+                tx_ready    <= 1'b0;
+                txd         <= START_BIT;
+            end
         end
-        else if (!tx_ready && (baud_cnt == 13'd1)) begin
-            data_bit_count <= data_bit_count + 1'b1;
-        end
-    end
+        else if (baud_cnt == BIT_TICKS_M1) begin
+            baud_cnt <= '0;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            txd <= 1'b1;
-        else if (baud_cnt == 13'd1  ) begin
-            case (data_bit_count)
-                4'd0:
-                    txd <= START_BIT;
-                4'd1:
-                    txd <= tx_data_reg[0];
-                4'd2:
-                    txd <= tx_data_reg[1];
-                4'd3:
-                    txd <= tx_data_reg[2];
-                4'd4:
-                    txd <= tx_data_reg[3];
-                4'd5:
-                    txd <= tx_data_reg[4];
-                4'd6:
-                    txd <= tx_data_reg[5];
-                4'd7:
-                    txd <= tx_data_reg[6];
-                4'd8:
-                    txd <= tx_data_reg[7];
-                4'd9:
-                    txd <= STOP_BIT;
-                default:
-                    txd <= 1'b1;
-            endcase
+            if (bit_index < 4'd8) begin
+                txd       <= tx_data_reg[bit_index[2:0]];
+                bit_index <= bit_index + 4'd1;
+            end
+            else if (bit_index == 4'd8) begin
+                txd       <= STOP_BIT;
+                bit_index <= 4'd9;
+            end
+            else begin
+                txd       <= STOP_BIT;
+                tx_ready  <= 1'b1;
+                bit_index <= 4'd0;
+            end
+        end
+        else begin
+            baud_cnt <= baud_cnt + {{(BAUD_W-1){1'b0}}, 1'b1};
         end
     end
 

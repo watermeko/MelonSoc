@@ -22,9 +22,11 @@ module sdhost_mmio (
         S_CMD_BITS,
         S_RESP_WAIT,
         S_RESP_BITS,
+        S_BUSY_WAIT,
         S_DATA_WAIT,
         S_DATA_BITS,
         S_DATA_CRC,
+        S_DATA_END,
         S_DONE
     } state_t;
 
@@ -35,9 +37,15 @@ module sdhost_mmio (
     logic [31:0] status;
     logic [31:0] resp0;
     logic [31:0] data_buf [0:127];
-`ifdef BENCH
-    logic [15:0] sim_image [0:1048575];
-    wire [19:0] sim_base = {cmd_arg[11:0], 8'b0};
+`ifdef BENCH_SD_DIRECT
+`ifndef SIM_SD_IMAGE_WORDS
+`define SIM_SD_IMAGE_WORDS 8388608
+`endif
+    localparam integer SIM_SD_IMAGE_ADDR_WIDTH = $clog2(`SIM_SD_IMAGE_WORDS);
+    logic [15:0] sim_image [0:`SIM_SD_IMAGE_WORDS-1];
+    wire [SIM_SD_IMAGE_ADDR_WIDTH-1:0] sim_base = {
+        cmd_arg[SIM_SD_IMAGE_ADDR_WIDTH-9:0], 8'b0
+    };
 `endif
 
     logic sdclk_q;
@@ -50,18 +58,41 @@ module sdhost_mmio (
     logic [31:0] resp_shift;
     logic [31:0] data_shift;
     logic [11:0] data_bit_count;
+    logic [15:0] data_crc_calc;
+    logic [15:0] data_crc_recv;
     logic op_read;
     logic data_started;
     logic data_done;
+    logic op_error;
     logic [31:0] debug_status;
+
+`ifdef BENCH
+    // Keep all command/data edge transitions in simulation, but do not spend
+    // host CPU time reproducing the board's conservative ~200 kHz SD clock.
+    localparam logic [7:0] SDCLK_CMD_DIV_MAX = 8'd1;
+    localparam logic [7:0] SDCLK_READ_DIV_MAX = 8'd1;
+`else
+    // Card identification must stay below 400 kHz.  Once initialization has
+    // completed, CMD17 may use the card's default-speed mode (up to 25 MHz).
+    // With the 27 MHz SoC clock, divider zero produces a 13.5 MHz
+    // SD clock and cuts a multi-megabyte Linux load from minutes to seconds.
+    localparam logic [7:0] SDCLK_CMD_DIV_MAX = 8'd67;
+    localparam logic [7:0] SDCLK_READ_DIV_MAX = 8'd0;
+`endif
+    wire [7:0] sdclk_div_max = (cmd_idx == 6'd17) ?
+                                   SDCLK_READ_DIV_MAX : SDCLK_CMD_DIV_MAX;
 
     assign sdclk = sdclk_q;
     assign sdcmd = sdcmd_oe ? sdcmd_out : 1'bz;
-    assign debug_status = {2'b0, sddat, sdcmd, data_done, data_started, op_read, state, data_bit_count, timeout[5:0]};
+    assign debug_status = {2'b0, sddat, sdcmd, data_done, data_started, op_read,
+                           state, data_bit_count, timeout[5:0]};
 
-`ifdef BENCH
+`ifdef BENCH_SD_DIRECT
+`ifndef SIM_SD_IMAGE_PATH
+`define SIM_SD_IMAGE_PATH "program/build/sd_image.hex"
+`endif
     initial begin
-        $readmemh("build/sd_image.hex", sim_image);
+        $readmemh(`SIM_SD_IMAGE_PATH, sim_image);
     end
 `endif
 
@@ -85,6 +116,16 @@ module sdhost_mmio (
         end
     endfunction
 
+    function automatic logic [15:0] crc16_next(input logic [15:0] crc,
+                                                input logic bit_in);
+        logic inv;
+        begin
+            inv = bit_in ^ crc[15];
+            crc16_next = {crc[14:12], crc[11] ^ inv, crc[10:5],
+                          crc[4] ^ inv, crc[3:0], inv};
+        end
+    endfunction
+
     wire [31:0] word_addr = align_word(bus.adr);
     wire data_sel = (word_addr >= IO_SD_DATA_ADDR) && (word_addr < (IO_SD_DATA_ADDR + 32'd512));
     wire [31:0] data_offset = word_addr - IO_SD_DATA_ADDR;
@@ -103,6 +144,8 @@ module sdhost_mmio (
             bus.dat_r = resp0;
         else if (word_addr == IO_SD_DEBUG_ADDR)
             bus.dat_r = debug_status;
+        else if (word_addr == IO_SD_CRC_ADDR)
+            bus.dat_r = {data_crc_recv, data_crc_calc};
         else if (data_sel)
             bus.dat_r = data_buf[data_word];
         else
@@ -127,7 +170,7 @@ module sdhost_mmio (
                     if (bus.dat_w[1])
                         status <= status & ~(ST_DONE | ST_ERR);
                     if (bus.dat_w[0] && ((status & ST_BUSY) == 32'b0)) begin
-`ifdef BENCH
+`ifdef BENCH_SD_DIRECT
                         if (bus.dat_w[3]) begin
                             for (int i = 0; i < 128; ++i) begin
                                 data_buf[i] = {
@@ -152,8 +195,9 @@ module sdhost_mmio (
                     end
                 end
             end
-            if (state == S_DONE)
-                status <= (status & ST_READ) | ST_DONE | (timeout == 16'hffff ? ST_ERR : 32'b0);
+            if (state == S_DONE) begin
+                status <= (status & ST_READ) | ST_DONE | (op_error ? ST_ERR : 32'b0);
+            end
         end
     end
 
@@ -170,15 +214,18 @@ module sdhost_mmio (
             resp_shift <= 32'b0;
             data_shift <= 32'b0;
             data_bit_count <= 12'b0;
+            data_crc_calc <= 16'b0;
+            data_crc_recv <= 16'b0;
             op_read <= 1'b0;
             data_started <= 1'b0;
             data_done <= 1'b0;
+            op_error <= 1'b0;
             state <= S_IDLE;
             for (int i = 0; i < 128; ++i)
                 data_buf[i] = 32'b0;
         end
         else begin
-            if (sdclk_div != 8'd67) begin
+            if (sdclk_div != sdclk_div_max) begin
                 sdclk_div <= sdclk_div + 8'd1;
             end
             else begin
@@ -198,6 +245,9 @@ module sdhost_mmio (
                             op_read <= start_read || ((status & ST_READ) != 32'b0);
                             data_started <= 1'b0;
                             data_done <= 1'b0;
+                            data_crc_calc <= 16'b0;
+                            data_crc_recv <= 16'b0;
+                            op_error <= 1'b0;
                             state <= S_CMD_GAP;
                         end
                     end
@@ -240,7 +290,10 @@ module sdhost_mmio (
                             state <= S_RESP_BITS;
                         end
                         else if (timeout == 16'hffff)
+                        begin
+                            op_error <= 1'b1;
                             state <= S_DONE;
+                        end
                     end
                     S_RESP_BITS: begin
                         bit_count <= bit_count - 8'd1;
@@ -252,8 +305,29 @@ module sdhost_mmio (
                                 data_bit_count <= 12'b0;
                                 state <= S_DATA_WAIT;
                             end
+                            else if (cmd_idx == 6'd7) begin
+                                timeout <= 16'b0;
+                                bit_count <= 8'd8;
+                                state <= S_BUSY_WAIT;
+                            end
                             else
                                 state <= S_DONE;
+                        end
+                    end
+                    S_BUSY_WAIT: begin
+                        timeout <= timeout + 16'd1;
+                        if (sddat[0] == 1'b0) begin
+                            bit_count <= 8'd8;
+                        end
+                        else if (bit_count == 8'd1) begin
+                            state <= S_DONE;
+                        end
+                        else begin
+                            bit_count <= bit_count - 8'd1;
+                        end
+                        if (timeout == 16'hffff) begin
+                            op_error <= 1'b1;
+                            state <= S_DONE;
                         end
                     end
                     S_DATA_WAIT: begin
@@ -262,13 +336,18 @@ module sdhost_mmio (
                             data_started <= 1'b1;
                             data_bit_count <= 12'd0;
                             data_shift <= 32'b0;
+                            data_crc_calc <= 16'b0;
+                            data_crc_recv <= 16'b0;
                             state <= S_DATA_BITS;
                         end
-                        else if (timeout == 16'hffff)
+                        else if (timeout == 16'hffff) begin
+                            op_error <= 1'b1;
                             state <= S_DONE;
+                        end
                     end
                     S_DATA_BITS: begin
                         data_shift <= {data_shift[30:0], sddat[0]};
+                        data_crc_calc <= crc16_next(data_crc_calc, sddat[0]);
                         data_bit_count <= data_bit_count + 12'd1;
                         if (data_bit_count[4:0] == 5'd31)
                             data_buf[data_bit_count[11:5]] <= {data_shift[30:0], sddat[0]};
@@ -279,9 +358,16 @@ module sdhost_mmio (
                         end
                     end
                     S_DATA_CRC: begin
+                        data_crc_recv <= {data_crc_recv[14:0], sddat[0]};
                         bit_count <= bit_count - 8'd1;
                         if (bit_count == 8'd1)
-                            state <= S_DONE;
+                            state <= S_DATA_END;
+                    end
+                    S_DATA_END: begin
+                        if ((sddat[0] != 1'b1) ||
+                            (data_crc_recv != data_crc_calc))
+                            op_error <= 1'b1;
+                        state <= S_DONE;
                     end
                     default: ;
                 endcase

@@ -47,16 +47,33 @@ SIM_ARGS ?=
 # For multiple commands, repeat --sim-arg directly:
 #   make simulate SIM_ARGS="--sim-arg test-mtime --sim-arg test-msip"
 SIM_CMD ?=
+SIM_MAX_CYCLES ?=
+SIM_EXPECT ?=
 SIM_XMODEM_IMAGE ?=
+SIM_DDR_IMAGE ?=
 SIM_XMODEM_CORRUPT_BLOCK ?=
+SIM_SD_SMOKE ?=
+SIM_SD_BOOT_IMAGE ?=
+SIM_SD_SERIAL ?=
+SIM_SD_IMAGE_SIZE_MIB ?= 16
+SIM_SD_IMAGE_WORDS := $(shell expr $(SIM_SD_IMAGE_SIZE_MIB) \* 524288)
 ifneq ($(SIM_CMD),)
     SIM_ARGS += --sim-arg "$(SIM_CMD)"
+endif
+ifneq ($(SIM_MAX_CYCLES),)
+    SIM_ARGS += --max-cycles "$(SIM_MAX_CYCLES)"
+endif
+ifneq ($(SIM_EXPECT),)
+    SIM_ARGS += --expect "$(SIM_EXPECT)"
 endif
 ifneq ($(SIM_XMODEM_IMAGE),)
     SIM_ARGS += --xmodem-image "$(SIM_XMODEM_IMAGE)"
 endif
 ifneq ($(SIM_XMODEM_CORRUPT_BLOCK),)
     SIM_ARGS += --xmodem-corrupt-block "$(SIM_XMODEM_CORRUPT_BLOCK)"
+endif
+ifneq ($(SIM_DDR_IMAGE),)
+    SIM_ARGS += --ddr-image "$(SIM_DDR_IMAGE)"
 endif
 
 TARGET_NAME = program
@@ -84,7 +101,8 @@ DDR_LINKER_SCRIPT = program/boot/linker_ddr.ld
 BIN2HEX_C_SRC = program/tools/bin_to_verilog_hex.c
 
 VERILOG_SOURCES = $(RTL_SOURCES)
-BUILD_DIR = build
+BUILD_DIR = program/build
+RTOS_BUILD_DIR = $(BUILD_DIR)/rtos
 VLT_MDIR = $(BUILD_DIR)/obj_dir
 
 TARGET_ELF = $(BUILD_DIR)/$(TARGET_NAME).elf
@@ -94,11 +112,29 @@ TARGET_TEXT_BIN = $(BUILD_DIR)/program_text.bin
 TARGET_DATA_BIN = $(BUILD_DIR)/program_data.bin
 TARGET_PROGROM_HEX = $(BUILD_DIR)/PROGROM.hex
 TARGET_DATARAM_HEX = $(BUILD_DIR)/DATARAM.hex
-DDR_APP_ELF = $(BUILD_DIR)/ddr_app.elf
-DDR_APP_TEXT_BIN = $(BUILD_DIR)/ddr_app_text.bin
-DDR_APP_DATA_BIN = $(BUILD_DIR)/ddr_app_data.bin
+DDR_APP_ELF = $(RTOS_BUILD_DIR)/ddr_app.elf
+DDR_APP_TEXT_BIN = $(RTOS_BUILD_DIR)/ddr_app_text.bin
+DDR_APP_DATA_BIN = $(RTOS_BUILD_DIR)/ddr_app_data.bin
 DDR_APP_BIN = $(BUILD_DIR)/BOOT.BIN
 SD_IMAGE_HEX = $(BUILD_DIR)/sd_image.hex
+SD_IMAGE_SIZE_STAMP = $(BUILD_DIR)/.sd_image_size
+SIM_SD_SMOKE_BOOT = $(BUILD_DIR)/sd_smoke_boot.bin
+SIM_SD_OVERRIDE_HEX = $(BUILD_DIR)/sd_image_sim.hex
+ifneq ($(SIM_SD_SMOKE),)
+    SIM_SD_BOOT_IMAGE := $(SIM_SD_SMOKE_BOOT)
+    SIM_SD_SERIAL := 1
+endif
+ifneq ($(SIM_SD_BOOT_IMAGE),)
+    SIM_SD_IMAGE_HEX := $(SIM_SD_OVERRIDE_HEX)
+    SIM_BUILD_TARGET := rom
+else
+    SIM_SD_IMAGE_HEX := $(SD_IMAGE_HEX)
+    SIM_BUILD_TARGET := build
+endif
+
+ifeq ($(SIM_SD_SERIAL),)
+    SIM_SD_DEFINES := -DBENCH_SD_DIRECT
+endif
 
 BIN2HEX_UTIL_NAME = bin_to_verilog_hex
 ifeq ($(OS),Windows_NT)
@@ -114,15 +150,15 @@ PICOLIBC_PREFIX ?= /usr/lib/picolibc/riscv64-unknown-elf
 PICOLIBC_INCLUDE_DIR = $(PICOLIBC_PREFIX)/include
 CFLAGS_COMMON = $(ARCH_FLAGS) -ffreestanding -flto -isystem $(PICOLIBC_INCLUDE_DIR)
 FREERTOS_INCLUDE = \
-    -Iprogram/ddr_app/FreeRTOS \
-    -Iprogram/ddr_app/FreeRTOS/include \
-    -Iprogram/ddr_app/FreeRTOS/portable/GCC/RISC-V \
-    -Iprogram/ddr_app/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions
+    -Iprogram/ddr_app/rtos/FreeRTOS \
+    -Iprogram/ddr_app/rtos/FreeRTOS/include \
+    -Iprogram/ddr_app/rtos/FreeRTOS/portable/GCC/RISC-V \
+    -Iprogram/ddr_app/rtos/FreeRTOS/portable/GCC/RISC-V/chip_specific_extensions/RV32I_CLINT_no_extensions
 
 CFLAGS_S = $(CFLAGS_COMMON)
 CFLAGS_C = $(CFLAGS_COMMON) -Os -Wall -fsingle-precision-constant -fno-inline-functions \
            -ffunction-sections -fdata-sections \
-           -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/ddr_app -Iprogram/boot \
+           -Iprogram/drivers -Iprogram/utils -Iprogram/app -Iprogram/ddr_app/rtos -Iprogram/boot \
            -I$(BUILD_DIR)/include \
            $(FREERTOS_INCLUDE)
 DEPFLAGS = -MMD -MP
@@ -130,9 +166,9 @@ DEPFLAGS = -MMD -MP
 LDFLAGS = -nostartfiles -T$(LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -flto
 LIBS = -lc -lm -lgcc
 TARGET_MAP = $(BUILD_DIR)/$(TARGET_NAME).map
-DDR_APP_MAP = $(BUILD_DIR)/ddr_app.map
+DDR_APP_MAP = $(RTOS_BUILD_DIR)/ddr_app.map
 
-.PHONY: all build clean dirs simulate menuconfig guiconfig defconfig
+.PHONY: all rom build clean dirs ddr_app simulate menuconfig guiconfig defconfig FORCE
 
 all:
 	@echo "Must select a target"
@@ -156,7 +192,9 @@ defconfig:
 	$(KCONFIG_ALLDEF) $(KCONFIG_FILE)
 	@$(MAKE) $(AUTOCONF_H)
 
-build: $(AUTOCONF_H) $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX) $(SD_IMAGE_HEX)
+rom: $(AUTOCONF_H) $(TARGET_PROGROM_HEX) $(TARGET_DATARAM_HEX)
+
+build: rom ddr_app $(SD_IMAGE_HEX)
 	@echo "Build complete!"
 	@echo "  PROGROM: $(TARGET_PROGROM_HEX)"
 	@echo "  DATARAM: $(TARGET_DATARAM_HEX)"
@@ -170,19 +208,19 @@ _C_OBJS = $(patsubst program/%.c,$(BUILD_DIR)/%.o,$(_C_SOURCES))
 _S_OBJS = $(patsubst program/%.s,$(BUILD_DIR)/%.o,$(_S))
 _S_UPPER_OBJS = $(patsubst program/%.S,$(BUILD_DIR)/%.o,$(_S_UPPER_SOURCES))
 OBJS = $(_C_OBJS) $(_S_OBJS) $(_S_UPPER_OBJS)
-DDR_APP_OBJS = $(BUILD_DIR)/ddr_app/start.o \
-               $(BUILD_DIR)/ddr_app/main.o \
-               $(BUILD_DIR)/ddr_app/test_rtos.o \
-               $(BUILD_DIR)/ddr_app/freertos_hooks.o \
-               $(BUILD_DIR)/drivers/uart.o \
-               $(BUILD_DIR)/utils/print.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/list.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/queue.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/tasks.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/timers.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/portable/GCC/RISC-V/port.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/portable/GCC/RISC-V/portASM.o \
-               $(BUILD_DIR)/ddr_app/FreeRTOS/portable/MemMang/heap_4.o
+DDR_APP_OBJS = $(RTOS_BUILD_DIR)/ddr_app/rtos/start.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/main.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/test_rtos.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/freertos_hooks.o \
+               $(RTOS_BUILD_DIR)/drivers/uart.o \
+               $(RTOS_BUILD_DIR)/utils/print.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/list.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/queue.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/tasks.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/timers.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/portable/GCC/RISC-V/port.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/portable/GCC/RISC-V/portASM.o \
+               $(RTOS_BUILD_DIR)/ddr_app/rtos/FreeRTOS/portable/MemMang/heap_4.o
 DEP_FILES = $(sort $(OBJS:.o=.d) $(DDR_APP_OBJS:.o=.d))
 
 -include $(DEP_FILES)
@@ -196,7 +234,7 @@ $(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT) | dirs
 $(DDR_APP_ELF): $(DDR_APP_OBJS) $(DDR_LINKER_SCRIPT) | dirs
 	@echo "Linking DDR app to $@"
 	$(CC) $(DDR_ARCH_FLAGS) -nostartfiles -T$(DDR_LINKER_SCRIPT) --specs=picolibc.specs -Wl,--gc-sections -Wl,--no-relax -Wl,-Map=$(DDR_APP_MAP) -flto $(DDR_APP_OBJS) $(LIBS) -o $@
-	@$(SIZE) -A $@ | tee $(BUILD_DIR)/ddr_app.size
+	@$(SIZE) -A $@ | tee $(RTOS_BUILD_DIR)/ddr_app.size
 
 $(DDR_APP_TEXT_BIN): $(DDR_APP_ELF) | dirs
 	@echo "Extracting DDR app .text to $@"
@@ -206,23 +244,55 @@ $(DDR_APP_DATA_BIN): $(DDR_APP_ELF) | dirs
 	@echo "Extracting DDR app .ramdata to $@"
 	$(OBJCOPY) -O binary --only-section=.ramdata $< $@
 
-$(DDR_APP_BIN): $(DDR_APP_TEXT_BIN) $(DDR_APP_DATA_BIN) program/tools/make_ddr_app_image.py | dirs
+ifeq ($(CONFIG_DDR_APP_LINUX),y)
+ddr_app: $(DDR_APP_BIN)
+
+$(DDR_APP_BIN): FORCE | dirs
+	$(MAKE) -C program/ddr_app/linux MELONSOC_BUILD_DIR=$(abspath $(BUILD_DIR)) all
+else
+ddr_app: $(DDR_APP_BIN)
+
+$(DDR_APP_BIN): FORCE $(DDR_APP_TEXT_BIN) $(DDR_APP_DATA_BIN) program/tools/make_ddr_app_image.py | dirs
 	@echo "Packaging DDR app image $@"
 	python3 program/tools/make_ddr_app_image.py $(DDR_APP_TEXT_BIN) $(DDR_APP_DATA_BIN) $@
+endif
 
-$(SD_IMAGE_HEX): $(DDR_APP_BIN) program/tools/make_sd_image.py | dirs
+$(SD_IMAGE_SIZE_STAMP): FORCE | dirs
+	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(SIM_SD_IMAGE_SIZE_MIB)" ]; then \
+		printf '%s\n' "$(SIM_SD_IMAGE_SIZE_MIB)" > $@; \
+	fi
+
+$(SD_IMAGE_HEX): $(DDR_APP_BIN) program/tools/make_sd_image.py $(SD_IMAGE_SIZE_STAMP) | dirs
 	@echo "Generating FAT32 SD image $@"
-	python3 program/tools/make_sd_image.py $(DDR_APP_BIN) $@
+	python3 program/tools/make_sd_image.py $(DDR_APP_BIN) $@ --size-mib $(SIM_SD_IMAGE_SIZE_MIB)
 
-$(BUILD_DIR)/ddr_app/start.o: program/ddr_app/start.s | dirs
-	@mkdir -p $(dir $@)
-	@echo "Assembling DDR app start: $< -> $@"
-	$(CC) $(DDR_ARCH_FLAGS) -ffreestanding -c $< -o $@
+$(SIM_SD_SMOKE_BOOT): program/tools/make_sd_smoke_boot.py | dirs
+	@echo "Generating simulation SD smoke-test boot image $@"
+	python3 $< $@
 
-$(BUILD_DIR)/ddr_app/main.o: program/ddr_app/main.c $(AUTOCONF_H) | dirs
+$(SIM_SD_OVERRIDE_HEX): $(SIM_SD_BOOT_IMAGE) program/tools/make_sd_image.py $(SD_IMAGE_SIZE_STAMP) | dirs
+	@echo "Generating simulation FAT32 SD image $@"
+	python3 program/tools/make_sd_image.py $(SIM_SD_BOOT_IMAGE) $@ --size-mib $(SIM_SD_IMAGE_SIZE_MIB)
+
+$(RTOS_BUILD_DIR)/ddr_app/rtos/main.o: program/ddr_app/rtos/main.c $(AUTOCONF_H) | dirs
 	@mkdir -p $(dir $@)
 	@echo "Compiling DDR app C source: $< -> $@"
 	$(CC) $(CFLAGS_C) $(DEPFLAGS) -c $< -o $@
+
+$(RTOS_BUILD_DIR)/%.o: program/%.c $(AUTOCONF_H) | dirs
+	@mkdir -p $(dir $@)
+	@echo "Compiling DDR app C source: $< -> $@"
+	$(CC) $(CFLAGS_C) $(DEPFLAGS) -c $< -o $@
+
+$(RTOS_BUILD_DIR)/%.o: program/%.s | dirs
+	@mkdir -p $(dir $@)
+	@echo "Assembling DDR app source: $< -> $@"
+	$(CC) $(CFLAGS_S) -c $< -o $@
+
+$(RTOS_BUILD_DIR)/%.o: program/%.S | dirs
+	@mkdir -p $(dir $@)
+	@echo "Assembling DDR app source (preprocessed): $< -> $@"
+	$(CC) $(CFLAGS_S) $(FREERTOS_INCLUDE) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: program/%.c $(AUTOCONF_H) | dirs
 	@mkdir -p $(dir $@)
@@ -292,10 +362,10 @@ load_flash:
 	sudo modprobe -r ftdi_sio && sudo modprobe ftdi_sio
 	@echo "USB reset complete."
 
-simulate: build $(VERILOG_SOURCES) $(SIM_CPP)
+simulate: $(SIM_BUILD_TARGET) $(SIM_SD_IMAGE_HEX) $(VERILOG_SOURCES) $(SIM_CPP)
 	@echo "Running Verilator to compile Verilog sources..."
 	@mkdir -p $(VLT_MDIR)
-	verilator -sv -I$(RTL_DIR) -I$(RTL_DIR)/lib -DBENCH -Wno-fatal --top-module SOC -cc -exe $(SIM_CPP_ABS) $(VERILOG_SOURCES) --Mdir $(VLT_MDIR) --bbox-unsup
+	verilator -sv -I$(RTL_DIR) -I$(RTL_DIR)/lib -DBENCH $(SIM_SD_DEFINES) -DSIM_SD_IMAGE_WORDS=$(SIM_SD_IMAGE_WORDS) -DSIM_SD_IMAGE_PATH=\"$(SIM_SD_IMAGE_HEX)\" -Wno-fatal --top-module SOC -cc -exe $(SIM_CPP_ABS) $(VERILOG_SOURCES) --Mdir $(VLT_MDIR) --bbox-unsup
 	@echo "Building Verilator simulation executable..."
 	@command -v $(HOST_CXX) >/dev/null 2>&1 || (echo "Error: need a C++ compiler (set HOST_CXX=clang++ or install g++)"; exit 1)
 	@echo 'int main(){return 0;}' | $(HOST_CXX) -x c++ - -o /tmp/melonsoc_cxx_test >/dev/null 2>&1 || (echo "Error: $(HOST_CXX) cannot compile C++ (missing cc1plus/libstdc++?). Install g++/clang++ and rerun."; exit 1)

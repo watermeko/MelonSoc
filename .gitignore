@@ -1,5 +1,7 @@
-src/build/
+src/program/build/
 src/obj_dir/
+__pycache__/
+*.pyc
 
 impl/*
 !impl/melon-riscv_process_config.json

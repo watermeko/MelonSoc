@@ -3,7 +3,8 @@
 SRC_MAKE := $(MAKE) -C src
 
 .PHONY: help all \
-    build clean dirs simulate load load_flash \
+    build clean dirs ddr_app simulate load load_flash \
+    menuconfig guiconfig defconfig \
     build_fpga build_fpga_all build_fpga_syn build_fpga_pnr \
     src-%
 
@@ -20,8 +21,8 @@ help:
 
 all: help
 
-build clean dirs simulate load load_flash:
-	@$(SRC_MAKE) $@
+build clean dirs ddr_app simulate load load_flash menuconfig guiconfig defconfig:
+	+@$(SRC_MAKE) $@
 
 build_fpga:
 	@stage="$(STAGE)"; \

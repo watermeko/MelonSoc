@@ -10,7 +10,7 @@ STACK_SIZE = 0x200000;
 SECTIONS {
     .text : {
         . = ALIGN(4);
-        build/ddr_app/start.o (.text)
+        program/build/rtos/ddr_app/rtos/start.o (.text)
         *(.text*)
         . = ALIGN(4);
     } > DDR_APP

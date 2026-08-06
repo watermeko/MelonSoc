@@ -51,6 +51,17 @@ module SOC (
     );
     import soc_pkg::*;
 
+`ifdef BENCH
+    // The physical SD socket provides pull-ups.  Model them explicitly;
+    // otherwise Verilator's two-state handling turns an undriven CMD/DAT
+    // line into zero and creates false response/data start bits.
+    pullup(sdcmd);
+    pullup(sddat[0]);
+    pullup(sddat[1]);
+    pullup(sddat[2]);
+    pullup(sddat[3]);
+`endif
+
     imem_if instr_bus();
     imem_if instr_rom_bus();
     wb_if cpu_data_bus();
@@ -97,6 +108,7 @@ module SOC (
 
     logic instr_is_ddr;
     logic instr_ddr_pending;
+    logic instr_ddr_killed;
     logic [31:0] instr_ddr_addr;
     logic [31:0] instr_ddr_rdata_q;
     always_comb begin
@@ -104,9 +116,16 @@ module SOC (
 
         instr_rom_bus.addr = instr_bus.addr;
         instr_rom_bus.ren = instr_bus.ren && !instr_is_ddr;
-        instr_bus.rdata = instr_is_ddr ? instr_ddr_rdata_q : instr_rom_bus.rdata;
+        instr_rom_bus.flush = instr_bus.flush;
+        instr_bus.rdata = instr_is_ddr ?
+                          ((ddr_instr_bus.ack && instr_ddr_pending &&
+                            !instr_ddr_killed && !instr_bus.flush) ?
+                           ddr_instr_bus.dat_r : instr_ddr_rdata_q) :
+                          instr_rom_bus.rdata;
         instr_bus.stall = instr_is_ddr ?
-                          !(ddr_instr_bus.ack && instr_ddr_pending && (instr_bus.addr == instr_ddr_addr)) :
+                          !(ddr_instr_bus.ack && instr_ddr_pending &&
+                            !instr_ddr_killed && !instr_bus.flush &&
+                            (instr_bus.addr == instr_ddr_addr)) :
                           instr_rom_bus.stall;
 
         ddr_instr_bus.adr = instr_ddr_pending ? instr_ddr_addr : instr_bus.addr;
@@ -121,15 +140,22 @@ module SOC (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             instr_ddr_pending <= 1'b0;
+            instr_ddr_killed <= 1'b0;
             instr_ddr_addr <= 32'b0;
             instr_ddr_rdata_q <= 32'b0;
         end
         else if (ddr_instr_bus.ack) begin
             instr_ddr_pending <= 1'b0;
-            instr_ddr_rdata_q <= ddr_instr_bus.dat_r;
+            instr_ddr_killed <= 1'b0;
+            if (!instr_ddr_killed && !instr_bus.flush)
+                instr_ddr_rdata_q <= ddr_instr_bus.dat_r;
+        end
+        else if (instr_bus.flush && instr_ddr_pending) begin
+            instr_ddr_killed <= 1'b1;
         end
         else if (!instr_ddr_pending && instr_bus.ren && instr_is_ddr) begin
             instr_ddr_pending <= 1'b1;
+            instr_ddr_killed <= 1'b0;
             instr_ddr_addr <= instr_bus.addr;
         end
     end
@@ -138,6 +164,8 @@ module SOC (
     logic data_is_ddr;
     logic data_is_ram;
     logic data_unmapped;
+    logic unmapped_ack_q;
+    logic mmio_ack_q;
     logic [31:0] cpu_data_rdata_mux;
     logic [31:0] cpu_data_rdata_q;
     always_comb begin
@@ -170,7 +198,9 @@ module SOC (
         ddr_data_bus.lock  = cpu_data_bus.lock;
         ddr_data_bus.cyc   = cpu_data_bus.cyc && data_is_ddr;
         ddr_data_bus.stb   = cpu_data_bus.stb && data_is_ddr;
+    end
 
+    always_comb begin
         unique case (1'b1)
             data_is_mmio: begin
                 cpu_data_rdata_mux = mmio_bus.dat_r;
@@ -184,7 +214,7 @@ module SOC (
             end
             data_unmapped: begin
                 cpu_data_rdata_mux = 32'b0;
-                cpu_data_bus.ack = cpu_data_bus.cyc && cpu_data_bus.stb;
+                cpu_data_bus.ack = unmapped_ack_q;
                 cpu_data_bus.stall = 1'b0;
             end
             default: begin
@@ -194,7 +224,8 @@ module SOC (
             end
         endcase
 
-        cpu_data_bus.dat_r = cpu_data_rdata_q;
+        cpu_data_bus.dat_r = cpu_data_bus.ack ? cpu_data_rdata_mux :
+                                                cpu_data_rdata_q;
     end
 
     assign ddr_app_lock = ddr_data_bus.lock;
@@ -205,9 +236,14 @@ module SOC (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cpu_data_rdata_q <= 32'b0;
+            unmapped_ack_q <= 1'b0;
+            mmio_ack_q <= 1'b0;
         end
-        else if (cpu_data_bus.cyc && cpu_data_bus.stb && cpu_data_bus.ack) begin
-            cpu_data_rdata_q <= cpu_data_rdata_mux;
+        else begin
+            unmapped_ack_q <= data_unmapped && !unmapped_ack_q;
+            mmio_ack_q <= mmio_bus.cyc && mmio_bus.stb && !mmio_ack_q;
+            if (cpu_data_bus.cyc && cpu_data_bus.stb && cpu_data_bus.ack)
+                cpu_data_rdata_q <= cpu_data_rdata_mux;
         end
     end
 
@@ -242,6 +278,7 @@ module SOC (
                  (align_word(mmio_bus.adr) == IO_SD_CTRL_ADDR) ||
                  (align_word(mmio_bus.adr) == IO_SD_RESP0_ADDR) ||
                  (align_word(mmio_bus.adr) == IO_SD_DEBUG_ADDR) ||
+                 (align_word(mmio_bus.adr) == IO_SD_CRC_ADDR) ||
                  ((align_word(mmio_bus.adr) >= IO_SD_DATA_ADDR) &&
                   (align_word(mmio_bus.adr) < (IO_SD_DATA_ADDR + 32'd512)));
         sel_clint = (align_word(mmio_bus.adr) == IO_CLINT_MSIP_ADDR) ||
@@ -255,58 +292,60 @@ module SOC (
         mmio_gpio_bus.sel   = mmio_bus.sel;
         mmio_gpio_bus.we    = mmio_bus.we;
         mmio_gpio_bus.lock  = mmio_bus.lock;
-        mmio_gpio_bus.cyc   = mmio_bus.cyc && sel_leds;
-        mmio_gpio_bus.stb   = mmio_bus.stb && sel_leds;
+        mmio_gpio_bus.cyc   = mmio_bus.cyc && sel_leds && !mmio_ack_q;
+        mmio_gpio_bus.stb   = mmio_bus.stb && sel_leds && !mmio_ack_q;
 
         mmio_uart_bus.adr   = mmio_bus.adr;
         mmio_uart_bus.dat_w = mmio_bus.dat_w;
         mmio_uart_bus.sel   = mmio_bus.sel;
         mmio_uart_bus.we    = mmio_bus.we;
         mmio_uart_bus.lock  = mmio_bus.lock;
-        mmio_uart_bus.cyc   = mmio_bus.cyc && sel_uart;
-        mmio_uart_bus.stb   = mmio_bus.stb && sel_uart;
+        mmio_uart_bus.cyc   = mmio_bus.cyc && sel_uart && !mmio_ack_q;
+        mmio_uart_bus.stb   = mmio_bus.stb && sel_uart && !mmio_ack_q;
 
         mmio_i2c_bus.adr   = mmio_bus.adr;
         mmio_i2c_bus.dat_w = mmio_bus.dat_w;
         mmio_i2c_bus.sel   = mmio_bus.sel;
         mmio_i2c_bus.we    = mmio_bus.we;
         mmio_i2c_bus.lock  = mmio_bus.lock;
-        mmio_i2c_bus.cyc   = mmio_bus.cyc && sel_i2c;
-        mmio_i2c_bus.stb   = mmio_bus.stb && sel_i2c;
+        mmio_i2c_bus.cyc   = mmio_bus.cyc && sel_i2c && !mmio_ack_q;
+        mmio_i2c_bus.stb   = mmio_bus.stb && sel_i2c && !mmio_ack_q;
 
         mmio_timer_bus.adr   = mmio_bus.adr;
         mmio_timer_bus.dat_w = mmio_bus.dat_w;
         mmio_timer_bus.sel   = mmio_bus.sel;
         mmio_timer_bus.we    = mmio_bus.we;
         mmio_timer_bus.lock  = mmio_bus.lock;
-        mmio_timer_bus.cyc   = mmio_bus.cyc && sel_timer;
-        mmio_timer_bus.stb   = mmio_bus.stb && sel_timer;
+        mmio_timer_bus.cyc   = mmio_bus.cyc && sel_timer && !mmio_ack_q;
+        mmio_timer_bus.stb   = mmio_bus.stb && sel_timer && !mmio_ack_q;
 
         mmio_spi_bus.adr   = mmio_bus.adr;
         mmio_spi_bus.dat_w = mmio_bus.dat_w;
         mmio_spi_bus.sel   = mmio_bus.sel;
         mmio_spi_bus.we    = mmio_bus.we;
         mmio_spi_bus.lock  = mmio_bus.lock;
-        mmio_spi_bus.cyc   = mmio_bus.cyc && sel_spi;
-        mmio_spi_bus.stb   = mmio_bus.stb && sel_spi;
+        mmio_spi_bus.cyc   = mmio_bus.cyc && sel_spi && !mmio_ack_q;
+        mmio_spi_bus.stb   = mmio_bus.stb && sel_spi && !mmio_ack_q;
 
         mmio_sd_bus.adr   = mmio_bus.adr;
         mmio_sd_bus.dat_w = mmio_bus.dat_w;
         mmio_sd_bus.sel   = mmio_bus.sel;
         mmio_sd_bus.we    = mmio_bus.we;
         mmio_sd_bus.lock  = mmio_bus.lock;
-        mmio_sd_bus.cyc   = mmio_bus.cyc && sel_sd;
-        mmio_sd_bus.stb   = mmio_bus.stb && sel_sd;
+        mmio_sd_bus.cyc   = mmio_bus.cyc && sel_sd && !mmio_ack_q;
+        mmio_sd_bus.stb   = mmio_bus.stb && sel_sd && !mmio_ack_q;
 
         mmio_clint_bus.adr   = mmio_bus.adr;
         mmio_clint_bus.dat_w = mmio_bus.dat_w;
         mmio_clint_bus.sel   = mmio_bus.sel;
         mmio_clint_bus.we    = mmio_bus.we;
         mmio_clint_bus.lock  = mmio_bus.lock;
-        mmio_clint_bus.cyc   = mmio_bus.cyc && sel_clint;
-        mmio_clint_bus.stb   = mmio_bus.stb && sel_clint;
+        mmio_clint_bus.cyc   = mmio_bus.cyc && sel_clint && !mmio_ack_q;
+        mmio_clint_bus.stb   = mmio_bus.stb && sel_clint && !mmio_ack_q;
+    end
 
-        mmio_bus.ack = mmio_bus.cyc && mmio_bus.stb;
+    always_comb begin
+        mmio_bus.ack = mmio_ack_q;
         mmio_bus.stall = 1'b0;
 
         unique case (1'b1)
@@ -401,9 +440,21 @@ module SOC (
     logic sd_rdreq;
     logic [39:0] sd_rdaddr;
     logic [15:0] sd_rddata;
-    logic [15:0] sd_image [0:1048575];
+`ifndef SIM_SD_IMAGE_WORDS
+`define SIM_SD_IMAGE_WORDS 8388608
+`endif
+    localparam integer SIM_SD_IMAGE_ADDR_WIDTH = $clog2(`SIM_SD_IMAGE_WORDS);
+    logic [15:0] sd_image [0:`SIM_SD_IMAGE_WORDS-1];
 
-    assign sd_rddata = sd_image[sd_rdaddr[19:0]];
+    // sd_fake's rdreq/rdaddr port models a synchronous backing RAM: rdaddr is
+    // advanced while rdreq is low, then rdreq latches that word for the next
+    // 16 serial data bits.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            sd_rddata <= 16'b0;
+        else if (sd_rdreq)
+            sd_rddata <= sd_image[sd_rdaddr[SIM_SD_IMAGE_ADDR_WIDTH-1:0]];
+    end
 
     sd_fake u_sd_fake (
         .rstn_async(rst_n),
@@ -420,22 +471,47 @@ module SOC (
     );
 
     initial begin
-        $readmemh("build/sd_image.hex", sd_image);
+`ifndef SIM_SD_IMAGE_PATH
+`define SIM_SD_IMAGE_PATH "program/build/sd_image.hex"
+`endif
+        $readmemh(`SIM_SD_IMAGE_PATH, sd_image);
     end
 `endif
 
     logic ddr_owner_valid;
     logic ddr_owner_is_data;
-    logic ddr_select_data;
+    logic ddr_owner_cooldown;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ddr_owner_valid <= 1'b0;
             ddr_owner_is_data <= 1'b0;
+            ddr_owner_cooldown <= 1'b0;
         end
         else if (ddr_owner_valid) begin
-            if (!ddr_data_bus.lock && (!ddr_data_bus.cyc || ddr_bus.ack))
-                ddr_owner_valid <= 1'b0;
+            if (ddr_owner_is_data) begin
+                // A speculative PTW can withdraw CYC while its request is
+                // still inside the DDR bridge.  Keep the old owner while the
+                // bridge is busy so the late response cannot reach the next
+                // master.
+                if (!ddr_data_bus.lock &&
+                    (ddr_bus.ack || (!ddr_data_bus.cyc && !ddr_bus.stall))) begin
+                    ddr_owner_valid <= 1'b0;
+                    ddr_owner_cooldown <= ddr_bus.ack;
+                end
+            end
+            else if (!ddr_instr_bus.lock &&
+                     (ddr_bus.ack ||
+                      (!ddr_instr_bus.cyc && !ddr_bus.stall))) begin
+                    ddr_owner_valid <= 1'b0;
+                    ddr_owner_cooldown <= ddr_bus.ack;
+            end
+        end
+        else if (ddr_owner_cooldown) begin
+            // The DDR bridge returns ACK/data through registers.  Keep one
+            // idle routing cycle after an acknowledged transfer so that its
+            // response tail cannot be observed by the next owner.
+            ddr_owner_cooldown <= 1'b0;
         end
         else if (ddr_data_bus.cyc) begin
             ddr_owner_valid <= 1'b1;
@@ -448,9 +524,22 @@ module SOC (
     end
 
     always_comb begin
-        ddr_select_data = ddr_owner_valid ? ddr_owner_is_data : ddr_data_bus.cyc;
-
-        if (ddr_select_data) begin
+        if (ddr_owner_cooldown || !ddr_owner_valid) begin
+            ddr_bus.adr = 32'b0;
+            ddr_bus.dat_w = 32'b0;
+            ddr_bus.sel = 4'b0;
+            ddr_bus.we = 1'b0;
+            ddr_bus.lock = 1'b0;
+            ddr_bus.cyc = 1'b0;
+            ddr_bus.stb = 1'b0;
+            ddr_data_bus.dat_r = 32'b0;
+            ddr_data_bus.ack = 1'b0;
+            ddr_data_bus.stall = ddr_data_bus.cyc;
+            ddr_instr_bus.dat_r = 32'b0;
+            ddr_instr_bus.ack = 1'b0;
+            ddr_instr_bus.stall = ddr_instr_bus.cyc;
+        end
+        else if (ddr_owner_is_data) begin
             ddr_bus.adr = ddr_data_bus.adr;
             ddr_bus.dat_w = ddr_data_bus.dat_w;
             ddr_bus.sel = ddr_data_bus.sel;

@@ -1,5 +1,17 @@
 mainmenu "MelonSoc Configuration"
 
+choice
+	prompt "DDR application"
+	default DDR_APP_RTOS
+
+config DDR_APP_RTOS
+	bool "FreeRTOS test application"
+
+config DDR_APP_LINUX
+	bool "OpenSBI + Linux + BusyBox"
+
+endchoice
+
 menu "Test Commands"
 
 config APP_TEST_M
